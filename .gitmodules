@@ -1,0 +1,6 @@
+[submodule "DigiFi"]
+	path = DigiFi
+	url = https://github.com/digistump/DigiFi.git
+[submodule "translate/src/github.com/stretchr/testify"]
+	path = translate/src/github.com/stretchr/testify
+	url = https://github.com/stretchr/testify.git
