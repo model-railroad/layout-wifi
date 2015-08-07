@@ -115,7 +115,7 @@ func (s *LwServ) SendWriters(line string) {
 //-----
 
 func LwServer(m *Model) chan LwSensor {
-    fmt.Println("Start LW server")
+    fmt.Printf("Start LW server simulator on %s\n", *LW_SERV_PORT)
 
     listener, err := net.Listen("tcp", *LW_SERV_PORT)
     if err != nil {

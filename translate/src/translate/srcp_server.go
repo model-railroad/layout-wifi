@@ -104,7 +104,7 @@ func (s *SrcpSessions) String() string {
 //-----
 
 func SrcpServer(m *Model) {
-    fmt.Println("Start SRCP server")
+    fmt.Printf("Start SRCP server on %s\n", *SRCP_PORT)
 
     listener, err := net.Listen("tcp", *SRCP_PORT)
     if err != nil {
@@ -144,7 +144,7 @@ func HandleSrcpConn(m *Model, s *SrcpSession) {
 
     loopRead: for !m.IsQuitting() {
         if s.mode == SRCP_MODE_INFO {
-            s.conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+            s.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
         }
         line, err := r.ReadString('\n')
 
@@ -167,7 +167,8 @@ func HandleSrcpConn(m *Model, s *SrcpSession) {
                 fmt.Println("[SRCP] Connection error:", op.Op)
                 break loopRead
             } else {
-                panic(err)
+                fmt.Println("[SRCP] Unexpected error:", err)
+                break loopRead
             }
         }
     }

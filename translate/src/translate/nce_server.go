@@ -15,7 +15,7 @@ const NCE_TRIGGER_ACC     = 0xAD
 const NCE_READ_RAM        = 0x9D
 
 func NceServer(m *Model) {
-    fmt.Println("Start NCE server")
+    fmt.Printf("Start NCE server on %s\n", *NCE_PORT)
 
     listener, err := net.Listen("tcp", *NCE_PORT)
     if err != nil {
@@ -155,7 +155,8 @@ func HandleNceConn(m *Model, conn net.Conn) {
                 fmt.Println("[NCE] Connection error:", op.Op)
                 break loopRead
             } else {
-                panic(err)
+                fmt.Println("[NCE] Unexpected error:", err)
+                break loopRead
             }
         }
     }

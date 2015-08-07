@@ -19,17 +19,19 @@ func LwClient(m *Model) {
 
     go func() {
         for !m.IsQuitting() {
+            fmt.Printf("LW client connecting to LW server %s\n", *LW_CLIENT_PORT)
             conn, err := net.Dial("tcp", *LW_CLIENT_PORT)
             if err != nil {
                 fmt.Printf("[LWC-READ] READ Connection error: %v", err)
                 time.Sleep(5 * time.Second)
                 
             } else {
+                //-- go HandleLwClientWriter(conn, m)
                 HandleLwClientReader(conn, m)
             }
         }
     }()
-
+/*
     go func() {
         for !m.IsQuitting() {
             conn, err := net.Dial("tcp", *LW_CLIENT_PORT)
@@ -42,6 +44,7 @@ func LwClient(m *Model) {
             }
         }
     }()
+*/
 }
 
 func HandleLwClientReader(conn net.Conn, m *Model) {
@@ -51,9 +54,17 @@ func HandleLwClientReader(conn net.Conn, m *Model) {
 
     r := bufio.NewReader(conn)
 
-    for !m.IsQuitting() {
+    loopRead: for !m.IsQuitting() {
+
+        conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
         line, err := r.ReadString('\n')
         
+        if err != nil {
+            if e, ok := err.(*net.OpError); ok && e.Timeout() {
+                HandleLwClientWriter(conn, m)
+                continue loopRead
+            }
+        }
         if err == nil {
             line := strings.TrimSpace(line)
             err = HandleLwClientReadLine(m, line)
@@ -61,9 +72,10 @@ func HandleLwClientReader(conn net.Conn, m *Model) {
         if err != nil {
             if op, ok := err.(*net.OpError); ok {
                 fmt.Println("[LWC-READER] READ Connection error:", op.Op)
-                return
+                break loopRead
             } else {
-                panic(fmt.Sprintf("[LWC-READER] Unexpected error: %#v\n", err))
+                fmt.Printf("[LWC-READER] Unexpected error: %#v\n", err)
+                break loopRead
             }
         }
     }
@@ -107,28 +119,24 @@ func HandleLwClientReadLine(m *Model, line string) (err error) {
 }
 
 func HandleLwClientWriter(conn net.Conn, m *Model) {
-    fmt.Println("[LWC-WRITER] New WRITE connection")
+    op, ok := m.GetTurnoutOp(500 * time.Millisecond)
+    if ok && op != nil {
+        str := "R"
+        if op.Normal {
+            str = "N"
+        }
+        str = fmt.Sprintf("@T%02d%s\n", op.Address, str)
+        fmt.Printf("[LWC-WRITER] > %s", str)
+        _, err := conn.Write([]byte(str))
 
-    for !m.IsQuitting() {
-        op, ok := m.GetTurnoutOp(500 * time.Millisecond)
-        if ok && op != nil {
-            str := "R"
-            if op.Normal {
-                str = "N"
-            }
-            str = fmt.Sprintf("@T%02d%s\n", op.Address, str)
-            fmt.Printf("[LWC-WRITER] > %s", str)
-            _, err := conn.Write([]byte(str))
-
-            if err != nil {
-                if op, ok := err.(*net.OpError); ok {
-                    fmt.Println("[LWC-WRITER] WRITE Connection error:", op.Op)
-                    return
-                } else {
-                    panic(fmt.Sprintf("[LWC-WRITER] Unexpected error: %#v\n", err))
-                }
+        if err != nil {
+            if op, ok := err.(*net.OpError); ok {
+                fmt.Println("[LWC-WRITER] WRITE Connection error:", op.Op)
+                return
+            } else {
+                fmt.Printf("[LWC-WRITER] Unexpected error: %#v\n", err)
+                return
             }
         }
     }
-    fmt.Println("[LWC-WRITER] WRITE Connection closed")
 }
