@@ -1,16 +1,24 @@
-package translate 
+package translate
 
 import (
     "bufio"
     "flag"
     "fmt"
     "net"
-    "strings"
     "strconv"
+    "strings"
     "time"
 )
 
 var LW_CLIENT_PORT = flag.String("lw-client-port", "localhost:9090", "LayoutWifi server host:port")
+
+type LwPendingOp struct {
+    expected string
+    op *TurnoutOp
+    time time.Time
+}
+
+var lw_pending *LwPendingOp
 
 //-----
 
@@ -24,27 +32,12 @@ func LwClient(m *Model) {
             if err != nil {
                 fmt.Printf("[LWC-READ] READ Connection error: %v", err)
                 time.Sleep(5 * time.Second)
-                
+
             } else {
-                //-- go HandleLwClientWriter(conn, m)
                 HandleLwClientReader(conn, m)
             }
         }
     }()
-/*
-    go func() {
-        for !m.IsQuitting() {
-            conn, err := net.Dial("tcp", *LW_CLIENT_PORT)
-            if err != nil {
-                fmt.Printf("[LWC-WRITER] WRITE Connection error: %v", err)
-                time.Sleep(5 * time.Second)
-                
-            } else {
-                HandleLwClientWriter(conn, m)
-            }
-        }
-    }()
-*/
 }
 
 func HandleLwClientReader(conn net.Conn, m *Model) {
@@ -58,7 +51,7 @@ func HandleLwClientReader(conn net.Conn, m *Model) {
 
         conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
         line, err := r.ReadString('\n')
-        
+
         if err != nil {
             if e, ok := err.(*net.OpError); ok && e.Timeout() {
                 HandleLwClientWriter(conn, m)
@@ -68,7 +61,7 @@ func HandleLwClientReader(conn net.Conn, m *Model) {
         if err == nil {
             line := strings.TrimSpace(line)
             err = HandleLwClientReadLine(m, line)
-        }        
+        }
         if err != nil {
             if op, ok := err.(*net.OpError); ok {
                 fmt.Println("[LWC-READER] READ Connection error:", op.Op)
@@ -83,6 +76,7 @@ func HandleLwClientReader(conn net.Conn, m *Model) {
 }
 
 func HandleLwClientReadLine(m *Model, line string) (err error) {
+    fmt.Println("[LWC-READER] < ", line)
     if len(line) == 8 && strings.HasPrefix(line, "@IT") {
         // Read INFO @IT<00>S<00>
         var num_turnouts, num_sensors int
@@ -92,6 +86,11 @@ func HandleLwClientReadLine(m *Model, line string) (err error) {
 
     } else if len(line) == 5 && strings.HasPrefix(line, "@T") {
         // Read turnout feedbback @T<00>[N|R]
+        if lw_pending != nil && lw_pending.expected == line {
+            fmt.Println("[LWC-READER] Got pending expected reply:", line)
+            lw_pending = nil
+        }
+
         buf := line[2:5]
         turnout := (int(buf[0] - '0') << 8) + int(buf[1] - '0')
         direction := uint8(buf[2])
@@ -114,12 +113,27 @@ func HandleLwClientReadLine(m *Model, line string) (err error) {
     } else {
         fmt.Printf("[LWC-READER] Ignore unknown line: '%s'\n", line)
     }
-    
+
     return err
 }
 
 func HandleLwClientWriter(conn net.Conn, m *Model) {
-    op, ok := m.GetTurnoutOp(500 * time.Millisecond)
+    var op *TurnoutOp
+    var ok bool
+
+    if lw_pending != nil {
+        if time.Now().Before(lw_pending.time) {
+            // There's a pending op and it's not stale yet
+            return
+        }
+        op = lw_pending.op
+        ok = true
+        lw_pending = nil
+        fmt.Println("[LWC-WRITER] Retrying pending op:", op)
+    } else {
+        op, ok = m.GetTurnoutOp(0 * time.Millisecond)
+    }
+
     if ok && op != nil {
         str := "R"
         if op.Normal {
@@ -129,6 +143,7 @@ func HandleLwClientWriter(conn net.Conn, m *Model) {
         fmt.Printf("[LWC-WRITER] > %s", str)
         _, err := conn.Write([]byte(str))
 
+        lw_pending = &LwPendingOp{strings.TrimSpace(str), op, time.Now().Add(2 * time.Second)}
         if err != nil {
             if op, ok := err.(*net.OpError); ok {
                 fmt.Println("[LWC-WRITER] WRITE Connection error:", op.Op)
@@ -140,3 +155,4 @@ func HandleLwClientWriter(conn net.Conn, m *Model) {
         }
     }
 }
+
