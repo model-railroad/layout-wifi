@@ -5,6 +5,7 @@
 #include "RalfDigiFi.h"
 #endif
 
+#undef DEBUG
 #define LED_PIN     13
 
 // There are 2 relays (one normal, one reversed) per turnout.
@@ -146,19 +147,23 @@ void process_wifi() {
         if (n > 1023) { n = 1023; }
         char *buf = _buf_1024;
         buf[n] = 0;
+#ifdef DEBUG        
         Serial.print("recv:_");
         snprintf(_buf_itoa, 12, "%d", n);
         Serial.print(_buf_itoa);
         Serial.print("_");
         Serial.print(buf);
         Serial.println("_");
+#endif
         if (n >= 3 && *(buf++) == '@') {
             blink();
             char cmd = *(buf++);
 
             if (cmd == 'I' && n == 3) {
                 // Info command: @I\n
+#ifdef DEBUG
                 Serial.println("Info Cmd");
+#endif
                 // Reply: @IT<00>S<00>\n
                 *(buf++) = 'T';
                 *(buf++) = '0' + TURNOUT_N / 10;
@@ -175,7 +180,9 @@ void process_wifi() {
                 char direction = buf[2];
                 if ((direction == TURNOUT_NORMAL || direction == TURNOUT_REVERSE)
                         && turnout > 0 && turnout <= TURNOUT_N) {
+#ifdef DEBUG
                     Serial.println("Accepted Turnout Cmd");
+#endif                    
                     turnout--; // cmd index is 1-based but array & relays are 0-based
 
                     int aiu = turnout / SENSORS_PER_AIU;
@@ -210,8 +217,7 @@ void poll_sensors() {
     if (_sensors_ms > millis()) {
         return;
     }
-    _sensors_ms = millis() + 500;   // twice per second
-    blink();
+    _sensors_ms = millis() + 10;    // 10 ms
 
     int j = 0;
     for (int aiu = 0; aiu < AIU_N; aiu++) {    
@@ -240,6 +246,7 @@ void poll_sensors() {
             *(buf++) = '\n';
             _wifi.write((const uint8_t*)_buf_1024, buf - _buf_1024);
             _last[aiu] = s;
+            blink();
         }
     }    
 }
