@@ -1,3 +1,4 @@
+#if !defined(ARDUINO_ARCH_SAM)
 #include <stdio.h>
 #include <string.h>
 
@@ -71,9 +72,9 @@ public:
     }
 
     size_t write(const uint8_t *buf, size_t size) {
-        _write_len = size;
-        memcpy(_write_data, buf, size);
-        _write_data[size] = 0;
+        memcpy(_write_data + _write_len, buf, size);
+        _write_len += size;
+        _write_data[_write_len] = 0;
         return size;
     }
     
@@ -159,7 +160,7 @@ void test_trip_relay() {
     _reset();
     trip_relay(0);
     trip_relay(RELAY_N - 1);
-    EXPECT("H090,L090,H097,L097,", _digital_writes);
+    EXPECT("H090,L090,H105,L105,", _digital_writes);
 }
 
 void test_receive_info() {
@@ -167,23 +168,48 @@ void test_receive_info() {
     _reset();
     _wifi._expected_readBytes_len = 1023;
     strcpy(_wifi._readBytes_data, "@I\n");
-    _wifi._available = 2;
-    _wifi._readBytes_reply = 2;
+    _wifi._available = 3;
+    _wifi._readBytes_reply = 3;
 
     process_wifi();
 
     EXPECT(9, _wifi._write_len);
-    EXPECT("@IT04S01\n", _wifi._write_data);
+    EXPECT("@IT08S04\n", _wifi._write_data);
     EXPECT("H013,L013,", _digital_writes); // blink    
 }
 
-void test_receive_turnout_normal() {
+void test_receive_turnout() {
     printf("- TEST: receive turnout normal\n");
     _reset();
     _wifi._expected_readBytes_len = 1023;
     strcpy(_wifi._readBytes_data, "@T01N\n");
-    _wifi._available = 5;
-    _wifi._readBytes_reply = 5;
+    _wifi._available = 6;
+    _wifi._readBytes_reply = 6;
+
+    process_wifi();
+
+    // same state as last, so it's a no-op
+    EXPECT(6, _wifi._write_len);
+    EXPECT("@T01N\n", _wifi._write_data);
+    EXPECT("H013,L013,", _digital_writes); // blink + trip_relay
+
+    _reset();
+    _wifi._expected_readBytes_len = 1023;
+    strcpy(_wifi._readBytes_data, "@T01R\n");
+    _wifi._available = 6;
+    _wifi._readBytes_reply = 6;
+
+    process_wifi();
+
+    EXPECT(6, _wifi._write_len);
+    EXPECT("@T01R\n", _wifi._write_data);
+    EXPECT("H013,L013,H091,L091,", _digital_writes); // blink + trip_relay
+
+    _reset();
+    _wifi._expected_readBytes_len = 1023;
+    strcpy(_wifi._readBytes_data, "@T01N\n");
+    _wifi._available = 6;
+    _wifi._readBytes_reply = 6;
 
     process_wifi();
 
@@ -192,33 +218,26 @@ void test_receive_turnout_normal() {
     EXPECT("H013,L013,H090,L090,", _digital_writes); // blink + trip_relay
 }
 
-void test_receive_turnout_reverse() {
-    printf("- TEST: receive turnout reverse\n");
-    _reset();
-    _wifi._expected_readBytes_len = 1023;
-    strcpy(_wifi._readBytes_data, "@T01R\n");
-    _wifi._available = 5;
-    _wifi._readBytes_reply = 5;
-
-    process_wifi();
-
-    EXPECT(6, _wifi._write_len);
-    EXPECT("@T01R\n", _wifi._write_data);
-    EXPECT("H013,L013,H091,L091,", _digital_writes); // blink + trip_relay
-}
-
 void test_poll_sensors() {
     printf("- TEST: poll sensors\n");
 
     _reset();
     _next_millis = 1000;
-    _digital_read = 0x0000;
+    _digital_read = 0x00000;
+
+    _wifi._expected_readBytes_len = 1023;
+    strcpy(_wifi._readBytes_data, "@T01R\n");
+    _wifi._available = 6;
+    _wifi._readBytes_reply = 6;
+
+    setup_sensors(); // forces the first write to send all sensors, even if unchanged
+    process_wifi();
     poll_sensors();
 
     EXPECT(1500, _sensors_ms);
-    EXPECT(9, _wifi._write_len);
-    EXPECT("@S010000\n", _wifi._write_data);
-    EXPECT("H013,L013,", _digital_writes); // blink
+    EXPECT(42, _wifi._write_len);
+    EXPECT("@T01R\n@S010001\n@S020000\n@S030000\n@S040000\n", _wifi._write_data);
+    EXPECT("H013,L013,H091,L091,H013,L013,", _digital_writes); // blink + 01R + blink
 
     // not past the 1500 ms mark yet, no action
     _reset();
@@ -233,13 +252,19 @@ void test_poll_sensors() {
 
     _reset();
     _next_millis = 1800;
-    _digital_read = 0x0001;
-    poll_sensors();
+    _digital_read = 0xF001; // only 14 bits are read for each AIU so 0x3001 is read
+
+    _wifi._expected_readBytes_len = 1023;
+    strcpy(_wifi._readBytes_data, "@T01N\n");
+    _wifi._available = 6;
+    _wifi._readBytes_reply = 6;
+
+    process_wifi();    poll_sensors();
 
     EXPECT(2300, _sensors_ms);
-    EXPECT(9, _wifi._write_len);
-    EXPECT("@S010001\n", _wifi._write_data);
-    EXPECT("H013,L013,", _digital_writes); // blink
+    EXPECT(33, _wifi._write_len);
+    EXPECT("@T01N\n@S010000\n@S033001\n@S043001\n", _wifi._write_data);
+    EXPECT("H013,L013,H090,L090,H013,L013,", _digital_writes); // blink + 01N + blink
 }
 
 int main(int argc, char **argv) {
@@ -249,8 +274,7 @@ int main(int argc, char **argv) {
     test_blink();
     test_trip_relay();
     test_receive_info();
-    test_receive_turnout_normal();
-    test_receive_turnout_reverse();
+    test_receive_turnout();
     test_poll_sensors();
     
     printf("- End. %d failures%s\n",
@@ -258,3 +282,5 @@ int main(int argc, char **argv) {
         _failures == 0 ? " => SUCCESS." : "");
     return 0;
 }
+
+#endif

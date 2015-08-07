@@ -25,7 +25,7 @@ func TestHandleLwServLine_ReceiveInfo(t *testing.T) {
     assert := assert.New(t)
     s := NewLwServ()
 
-    assert.Equal("@IT10S04\n", HandleLwServLine(s, "@I"))
+    assert.Equal("@IT08S04\n", HandleLwServLine(s, "@I"))
 }
 
 func TestHandleLwServLine_TurnoutNormal(t *testing.T) {

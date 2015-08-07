@@ -23,14 +23,14 @@ var LW_SERV_PORT = flag.String("lw-serv-port", ":9090", "LayoutWifi simulator se
 
 const LW_LED_PIN        = 13
 const LW_RELAY_PIN_1    = 90
-const LW_TURNOUT_N      = 10
+const LW_TURNOUT_N      =  8
 const LW_RELAY_N        =  2 * LW_TURNOUT_N
 
 const LW_SENSORS_PER_AIU = SENSORS_PER_AIU
 
-const LW_SENSOR_PIN_1   = 107
-const LW_SENSOR_N       =  45
-const LW_AIU_N          =   4
+const LW_SENSOR_PIN_1   = 22
+const LW_AIU_N          =  4
+const LW_SENSOR_N       = LW_AIU_N * LW_SENSORS_PER_AIU
 
 const LW_TURNOUT_NORMAL    = 'N'
 const LW_TURNOUT_REVERSE   = 'R'
