@@ -13,8 +13,12 @@ import (
 )
 
 var LW_SERV bool
+var CONFIG Config
+var CONFIG_FILE = flag.String("config", "~/.translaterc", "Config file to read")
 
 func init() {
+    CONFIG = NewConfig()
+    CONFIG.ReadFile(*CONFIG_FILE)
     flag.BoolVar(&LW_SERV, "simulate", false, "Simulate LayoutWifi server")
 }
 
