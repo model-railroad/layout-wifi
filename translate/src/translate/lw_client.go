@@ -34,13 +34,13 @@ func LwClient(m *Model) {
                 time.Sleep(5 * time.Second)
 
             } else {
-                HandleLwClientReader(conn, m)
+                LwClient_Read(conn, m)
             }
         }
     }()
 }
 
-func HandleLwClientReader(conn net.Conn, m *Model) {
+func LwClient_Read(conn net.Conn, m *Model) {
     fmt.Println("[LWC-READER] New READ connection")
 
     defer conn.Close()
@@ -54,13 +54,13 @@ func HandleLwClientReader(conn net.Conn, m *Model) {
 
         if err != nil {
             if e, ok := err.(*net.OpError); ok && e.Timeout() {
-                HandleLwClientWriter(conn, m)
+                LwClient_Write(conn, m)
                 continue loopRead
             }
         }
         if err == nil {
             line := strings.TrimSpace(line)
-            err = HandleLwClientReadLine(m, line)
+            err = LwClient_ReadLine(m, line)
         }
         if err != nil {
             if op, ok := err.(*net.OpError); ok {
@@ -75,7 +75,7 @@ func HandleLwClientReader(conn net.Conn, m *Model) {
     fmt.Println("[LWC-READER] READ Connection closed")
 }
 
-func HandleLwClientReadLine(m *Model, line string) (err error) {
+func LwClient_ReadLine(m *Model, line string) (err error) {
     fmt.Println("[LWC-READER] < ", line)
     if len(line) == 8 && strings.HasPrefix(line, "@IT") {
         // Read INFO @IT<00>S<00>
@@ -117,7 +117,7 @@ func HandleLwClientReadLine(m *Model, line string) (err error) {
     return err
 }
 
-func HandleLwClientWriter(conn net.Conn, m *Model) {
+func LwClient_Write(conn net.Conn, m *Model) {
     var op *TurnoutOp
     var ok bool
 

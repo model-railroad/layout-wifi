@@ -30,12 +30,12 @@ func NceServer(m *Model) {
             if err != nil {
                 panic(err)
             }
-            go HandleNceConn(m, conn)
+            go NceServ_HandleConn(m, conn)
         }
     }(listener)
 }
 
-func HandleNceConn(m *Model, conn net.Conn) {
+func NceServ_HandleConn(m *Model, conn net.Conn) {
     fmt.Println("[NCE] New connection")
 
     defer conn.Close()

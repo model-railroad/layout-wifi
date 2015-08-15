@@ -124,7 +124,7 @@ func LwServer(m *Model) chan LwSensor {
     
     serv := NewLwServ()
 
-    go LwServHandler(m, serv)
+    go serv.ChanHandler(m)
     
     go func(listener net.Listener) {
         defer listener.Close()
@@ -138,7 +138,7 @@ func LwServer(m *Model) chan LwSensor {
             go func(conn net.Conn) {
                 id, c := serv.AllocWriterChan()
                 defer serv.ReleaseWriterChan(id)
-                HandleLwServConn(conn, m, serv, id, c)
+                serv.HandleConn(conn, m, id, c)
             }(conn)
         }
     }(listener)
@@ -146,27 +146,27 @@ func LwServer(m *Model) chan LwSensor {
     return serv.sensors_chan
 }
 
-func LwServHandler(m *Model, s *LwServ) {
-    fmt.Println("[LW-SERV] New handler")
+func (s *LwServ) ChanHandler(m *Model) {
+    fmt.Println("[LW-SERV] New ChanHandler")
 
     for !m.IsQuitting() {
         select {
         case line := <- s.reader_chan:
             fmt.Printf("[LW-SERV] < %s\n", line)
-            s.writer_chan <- HandleLwServLine(s, line)
+            s.writer_chan <- s.HandleLine(line)
 
         case <- time.After(500 * time.Millisecond):
-            s.writer_chan <- LwServPollSensors(m, s)
+            s.writer_chan <- s.PollSensors(m)
 
         case line := <- s.writer_chan:
             s.SendWriters(line)
         }
     }
 
-    fmt.Println("[LW-SERV] End handler")
+    fmt.Println("[LW-SERV] End ChanHandler")
 }
 
-func HandleLwServConn(conn net.Conn, m *Model, s *LwServ, id int, writer chan string) {
+func (s *LwServ) HandleConn(conn net.Conn, m *Model, id int, writer chan string) {
     fmt.Println("[LW-SERV] New connection")
 
     defer conn.Close()
@@ -217,7 +217,7 @@ func HandleLwServConn(conn net.Conn, m *Model, s *LwServ, id int, writer chan st
     fmt.Println("[LW-SERV] Connection closed")
 }
 
-func HandleLwServLine(s *LwServ, line string) string {
+func (s *LwServ) HandleLine(line string) string {
 
     if line == "@I" {
         // Info command: @I\n
@@ -265,7 +265,7 @@ func HandleLwServLine(s *LwServ, line string) string {
     return ""
 }
 
-func LwServPollSensors(m *Model, lw *LwServ) (reply string) {
+func (lw *LwServ) PollSensors(m *Model) (reply string) {
     
     loopRead: for !m.IsQuitting() {
         select {

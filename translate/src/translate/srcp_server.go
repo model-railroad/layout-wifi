@@ -127,13 +127,13 @@ func SrcpServer(m *Model) {
                 session := NewSrcpSession(id, SRCP_MODE_HANDSHAKE, 0, conn, sessions)
                 sessions.Add(session)
                 defer sessions.Remove(session)
-                HandleSrcpConn(m, session)
+                session.HandleConn(m)
             }(session_id, conn)
         }
     }(listener)
 }
 
-func HandleSrcpConn(m *Model, s *SrcpSession) {
+func (s *SrcpSession) HandleConn(m *Model) {
     fmt.Println("[SRCP] New session/connection")
 
     defer s.conn.Close()
@@ -151,7 +151,7 @@ func HandleSrcpConn(m *Model, s *SrcpSession) {
         if s.mode == SRCP_MODE_INFO && err != nil {
             if e, ok := err.(*net.OpError); ok && e.Timeout() {
                 // send periodic INFO sensor updates
-                SendSrcpSensorUpdate(m, s)
+                s.SendSensorUpdate(m)
                 continue loopRead
             }
         }
@@ -159,7 +159,7 @@ func HandleSrcpConn(m *Model, s *SrcpSession) {
         if err == nil {
             line := strings.TrimSpace(line)
             fmt.Printf("[SRCP %d] > %s\n", s.id, line)
-            err = HandleSrcpLine(m, s, line)
+            err = s.HandleLine(m, line)
         }
 
         if err != nil {
@@ -176,7 +176,7 @@ func HandleSrcpConn(m *Model, s *SrcpSession) {
     fmt.Println("[SRCP] Connection closed")
 }
 
-func HandleSrcpLine(m *Model, s *SrcpSession, line string) error {
+func (s *SrcpSession) HandleLine(m *Model, line string) error {
 
     if strings.Index(line, "SET PROTOCOL SRCP ") == 0 {
         s.Reply("201 OK PROTOCOL SRCP")
@@ -247,7 +247,7 @@ func HandleSrcpLine(m *Model, s *SrcpSession, line string) error {
     return nil
 }
 
-func SendSrcpSensorUpdate(m *Model, s *SrcpSession) {
+func (s *SrcpSession) SendSensorUpdate(m *Model) {
     // send periodic INFO sensor updates if they have changed
     sensor := 0
     for aiu := 1; aiu <= MAX_AIUS; aiu++ {
