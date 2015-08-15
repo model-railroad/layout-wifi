@@ -59,16 +59,16 @@ func (c *Config) Get(key, defaultValue string) string {
     }
 }
 
-func (c *Config) UpdateFlags(flags *flag.FlagSet) {
+func (c *Config) UpdateFlags(fs *flag.FlagSet) {
     var actual = make(map[string] *flag.Flag) 
-    flag.Visit(func(f *flag.Flag) {
+    fs.Visit(func(f *flag.Flag) {
         actual[f.Name] = f
     })
     
-    flag.VisitAll(func(f *flag.Flag) {
+    fs.VisitAll(func(f *flag.Flag) {
         if _, visited := actual[f.Name]; !visited {
             if value, ok := (*c)[f.Name]; ok {
-                flags.Set(f.Name, value)
+                fs.Set(f.Name, value)
             }
         }
     })
