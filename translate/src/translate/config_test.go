@@ -13,7 +13,7 @@ func TestConfig_Empty(t *testing.T) {
     
     c := NewConfig()
     assert.Nil(c.Read(r))
-    assert.Equal(0, len(c))    
+    assert.Equal(0, len(*c))    
 }
 
 func TestConfig_Content(t *testing.T) {
@@ -25,8 +25,14 @@ func TestConfig_Content(t *testing.T) {
     
     c := NewConfig()
     assert.Nil(c.Read(r))
-    assert.Equal(3, len(c))
-    assert.Equal("value1", c["key1"])
-    assert.Equal("some other value", c["key_2"])
-    assert.Equal("value for 3", c["__KEY-3__"])
+    assert.Equal(3, len(*c))
+    assert.Equal("value1", (*c)["key1"])
+    assert.Equal("some other value", (*c)["key_2"])
+    assert.Equal("value for 3", (*c)["__KEY-3__"])
+    
+    assert.Equal("value1", c.Get("key1", "default"))
+    assert.Equal("some other value", c.Get("key_2", "default"))
+    assert.Equal("value for 3", c.Get("__KEY-3__", "default"))
+
+    assert.Equal("default", c.Get("key4", "default"))
 }

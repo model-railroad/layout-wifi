@@ -13,12 +13,10 @@ import (
 )
 
 var LW_SERV bool
-var CONFIG Config
+var CONFIG = NewConfig()
 var CONFIG_FILE = flag.String("config", "~/.translaterc", "Config file to read")
 
 func init() {
-    CONFIG = NewConfig()
-    CONFIG.ReadFile(*CONFIG_FILE)
     flag.BoolVar(&LW_SERV, "simulate", false, "Simulate LayoutWifi server")
 }
 
@@ -75,6 +73,9 @@ func TerminalLoop(m *Model, sensors_chan chan<- LwSensor) {
 
 func Main() {
     flag.Parse()
+    CONFIG.ReadFile(*CONFIG_FILE)
+    CONFIG.UpdateFlags(flag.CommandLine)
+
     model := NewModel()
     SetupSignal(model)
     NceServer(model)
