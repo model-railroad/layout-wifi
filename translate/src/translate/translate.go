@@ -7,17 +7,25 @@ import (
     "io"
     "os"
     "os/signal"
+    "os/user"
+    "path/filepath"
     "strings"
     "strconv"
     "syscall"
 )
 
 var LW_SERV bool
+var CONFIG_FILE string
 var CONFIG = NewConfig()
-var CONFIG_FILE = flag.String("config", "~/.translaterc", "Config file to read")
 
 func init() {
     flag.BoolVar(&LW_SERV, "simulate", false, "Simulate LayoutWifi server")
+    
+    filename := "~/.translaterc"
+    if usr, err := user.Current(); err == nil {
+        filename = filepath.Join(usr.HomeDir, filename[2:])
+    }
+    flag.StringVar(&CONFIG_FILE, "config", filename, "Config file to read")
 }
 
 // -----
@@ -73,7 +81,7 @@ func TerminalLoop(m *Model, sensors_chan chan<- LwSensor) {
 
 func Main() {
     flag.Parse()
-    CONFIG.ReadFile(*CONFIG_FILE)
+    CONFIG.ReadFile(CONFIG_FILE)
     CONFIG.UpdateFlags(flag.CommandLine)
 
     model := NewModel()
