@@ -23,13 +23,13 @@ var CAM_SERV = flag.String("cam-server", ":8088", "Camera debug server host:port
 
 var CAM_HOSTS = flag.String("cam-urls",
     "camera1.local:80/path.cgi?user=foo&pwd=blah," +
-    "user2:pwd2@camera2.local/path.cgi", 
+    "user2:pwd2@camera2.local/path.cgi",
     "Cameras user:pwd@host:port/path")
 
 var CAM_SENSORS = flag.String("cam-sensors",
     "0,38:172,142,164,142,180,142 0,37:602,145,594,145,611,145",
     "Camera detection points: N,S:x,y,{3}...")
-    
+
 // Typical URLs:
 // Foscam: http://foscam.ip/videostream.cgi?resolution=32&user=USER&pwd=PWD
 // Edimax: http://USER:PWD@edimax.ip/mjpg/video.mjpg
@@ -108,15 +108,15 @@ func CamSensorDebugHandler(w http.ResponseWriter, req *http.Request) {
         <meta http-equiv="refresh" content="5">
         <title>Translate Debug</title></head>
         <body>`
-    
+
     content += fmt.Sprintf("%d Cameras:<br/>\n", len(CAMERAS))
-    
+
     for _, cam := range CAMERAS {
         content += cam.DebugHtml()
     }
-    
+
     content += "</body>"
-    
+
     w.Header().Set("Content-Type", "text/html; charset=utf-8")
     w.WriteHeader(http.StatusOK)
     io.WriteString(w, content)
@@ -130,7 +130,7 @@ func CamSensorLastImageHandler(cam *Camera, w http.ResponseWriter, req *http.Req
         jpeg.Encode(w, img, nil /*Options*/)
         return
     }
-    
+
     w.Header().Set("Content-Type", "text/plain; charset=utf-8")
     w.WriteHeader(http.StatusOK)
     io.WriteString(w, "No image available.\n")
@@ -147,7 +147,7 @@ func CamSensorClient(m *Model) {
         cam := NewCamera(index, url)
         cam.SetupSensors(*CAM_SENSORS)
         CAMERAS = append(CAMERAS, cam)
-        http.HandleFunc(fmt.Sprintf("/last/%d", index), 
+        http.HandleFunc(fmt.Sprintf("/last/%d", index),
             func(w http.ResponseWriter, r *http.Request) {
                 CamSensorLastImageHandler(cam, w, r)
             })
@@ -172,12 +172,12 @@ func CamSensorClient(m *Model) {
 
 func (cam *Camera) CamClient(stream io.ReadCloser, m *Model) {
     fmt.Printf("[CAM %d: %s] New READ connection\n", cam.index, cam.url.Host)
-    
+
     boundary := "ipcamera" // TODO
-    
+
     defer stream.Close()
     reader := multipart.NewReader(stream, boundary)
-    
+
     loopRead: for !m.IsQuitting() {
         part, err := reader.NextPart()
         if err == io.EOF {
@@ -185,22 +185,21 @@ func (cam *Camera) CamClient(stream io.ReadCloser, m *Model) {
         } else if err != nil {
             panic(err)
         }
-        
-        //-- bytes, err := ioutil.ReadAll(part)
+
         defer part.Close()
-        
+
         img, err := jpeg.Decode(part)
         if err != nil {
             panic(err)
         }
-        
+
         if img.ColorModel() != color.GrayModel {
             img = &GrayImage{ img, color.GrayModel }
         }
-                
+
         cam.UpdateSensors(img, m)
         cam.SetLast(img)
-        
+
         /* fmt.Printf("[CAM %d: %s] Decoded JPEG %d x %d\n", 
             cam.index, cam.url.Host, 
             img.Bounds().Dx(), img.Bounds().Dy())
@@ -223,17 +222,17 @@ func (cam *Camera) SetLast(img image.Image) {
 
 func (cam *Camera) SetupSensors(config string) {
     re := regexp.MustCompile(fmt.Sprintf("([%d]),([0-9]+):([0-9]+),([0-9]+),([0-9]+),([0-9]+),([0-9]+),([0-9]+)", cam.index))
-    
+
     match := re.FindAllStringSubmatch(config, -1 /*all*/)
     for _, result := range match {
         s := &CamSensor{}
         s.init = true
-        
+
         var err error
         if s.sensor, err = strconv.Atoi(result[2]); err != nil {
             panic(err)
         }
-        
+
         s.points = make([]int, CAM_N_POINTS * 2)
         s.values = make([]int, CAM_N_POINTS)
         for i := 0; i < CAM_N_POINTS * 2; i++ {
@@ -241,7 +240,7 @@ func (cam *Camera) SetupSensors(config string) {
                 panic(err)
             }
         }
-        
+
         cam.sensors = append(cam.sensors, s)
     }
 }
@@ -249,13 +248,13 @@ func (cam *Camera) SetupSensors(config string) {
 func (cam *Camera) DebugHtml() string {
     content := fmt.Sprintf(
         `<p/><a href='/last/%d'>Last image from camera %d</a><br/>
-         <img src='/last/%d'/><br/>`, 
+         <img src='/last/%d'/><br/>`,
         cam.index, cam.index, cam.index)
-        
+
     for index, sensor := range cam.sensors {
         content += fmt.Sprintf("[%d] %v <br/>", index, sensor)
     }
-        
+
     return content
 }
 
@@ -266,8 +265,8 @@ func (cam *Camera) UpdateSensors(img image.Image, m *Model) {
             c := img.At(sensor.points[j], sensor.points[j+1])
             sensor.values[i] = int(c.(color.Gray).Y)
             i++
-            j += 2 
-            
+            j += 2
+
             // value 0 is the mid point, which must be high (white)
             // values 1 & 2 are the guards (darker).
             // Expected: [0] > 128 && [1,2] < 128

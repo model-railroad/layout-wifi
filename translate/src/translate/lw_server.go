@@ -29,7 +29,7 @@ const LW_RELAY_N        =  2 * LW_TURNOUT_N
 const LW_SENSORS_PER_AIU = SENSORS_PER_AIU
 
 const LW_SENSOR_PIN_1   = 22
-const LW_AIU_N          =  4
+const LW_AIU_N          =  2
 const LW_SENSOR_N       = LW_AIU_N * LW_SENSORS_PER_AIU
 
 const LW_TURNOUT_NORMAL    = 'N'
