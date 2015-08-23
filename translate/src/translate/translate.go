@@ -88,6 +88,8 @@ func Main() {
     SetupSignal(model)
     NceServer(model)
     SrcpServer(model)
+    CamSensorClient(model)
+    CamSensorDebugServer()
     
     var sensors_chan chan LwSensor
     if (LW_SERV) {

@@ -23,6 +23,7 @@ func (c *Config) Read(r io.Reader) error {
 }
 
 func (c *Config) ReadFile(filename string) error {
+    fmt.Printf("[CONFIG] filename: %s\n", filename)
     f, err := os.Open(filename)
     if err != nil {
         if os.IsNotExist(err) {
@@ -40,13 +41,14 @@ func (c *Config) parse(r *bufio.Reader) error {
     for {
         line, err := r.ReadString('\n')
         if err == io.EOF {
-            return nil
+            break
         } else if err != nil {
             panic(fmt.Sprintf("[CONFIG] Error reading config file: %v", err))
         }
         fields := CONFIG_LINE_RE.FindStringSubmatch(line)
         (*c)[fields[1]] = fields[2]
     }
+    fmt.Printf("[CONFIG] Read %d key/values from config file\n", len(*c))
     return nil
 }
 
@@ -69,6 +71,7 @@ func (c *Config) UpdateFlags(fs *flag.FlagSet) {
         if _, visited := actual[f.Name]; !visited {
             if value, ok := (*c)[f.Name]; ok {
                 fs.Set(f.Name, value)
+                //--fmt.Printf("[CONFIG] DEBUG: SET %s = %s\n", f.Name, value)
             }
         }
     })
