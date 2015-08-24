@@ -7,6 +7,7 @@ import (
     "image"
     "image/color"
     "image/jpeg"
+    "image/png"
     "mime/multipart"
     "regexp"
     "net/http"
@@ -40,7 +41,7 @@ var CAMERAS []*Camera
 
 type CamSensor struct {
     sensor  int
-    points  []int // CAM_N_POINTS pairs x/y
+    points  []image.Point // CAM_N_POINTS pairs x/y
     values  []int // CAM_N_POINTS current values
     empty   bool
     init    bool
@@ -50,7 +51,7 @@ type Camera struct {
     index   int
     url     *net_url.URL
     mutex   sync.Mutex
-    last    image.Image
+    last    *CamImage
     sensors []*CamSensor
 }
 
@@ -73,24 +74,42 @@ func NewCamera(index int, url_str string) *Camera {
 // acceded. Cons: No caching. Pros: good if only a few pixels are accessed.
 //
 // @Implements image.Image.
-type GrayImage struct {
+type CamImage struct {
+    cam   *Camera
     img   image.Image
-    model color.Model
+    //--model color.Model
 }
 
-func (c *GrayImage) ColorModel() color.Model {
-    return c.model
+func (cam *Camera) NewCamImage(source image.Image) *CamImage {
+    ci := &CamImage { cam, source }
+    return ci
+}
+
+func (ci *CamImage) ColorModel() color.Model {
+    return color.RGBAModel     // -- ci.img.ColorModel()
 }
 
 // Return the original bounds
-func (c *GrayImage) Bounds() image.Rectangle {
-    return c.img.Bounds()
+func (ci *CamImage) Bounds() image.Rectangle {
+    return ci.img.Bounds()
 }
 
 // At() forwards the call to the original image and
 // uses the color model to convert it.
-func (c *GrayImage) At(x, y int) color.Color {
-    return c.model.Convert(c.img.At(x,y))
+func (ci *CamImage) At(x, y int) color.Color {
+    for _, s := range ci.cam.sensors {
+        for _, p := range s.points {
+            if p.X == x && p.Y == y {
+                return color.RGBA{0xFF, 0x00, 0x00, 0xFF}
+            }
+        }
+    }
+
+    return ci.GrayAt(x, y)
+}
+
+func (ci *CamImage) GrayAt(x, y int) color.Color {
+    return color.GrayModel.Convert(ci.img.At(x,y))
 }
 
 //-----
@@ -98,9 +117,11 @@ func (c *GrayImage) At(x, y int) color.Color {
 func CamSensorDebugServer() {
     http.HandleFunc("/", CamSensorDebugHandler)
 
-    if err := http.ListenAndServe(*CAM_SERV, nil /*handler*/); err != nil {
-        panic(err)
-    }
+    go func() {
+        if err := http.ListenAndServe(*CAM_SERV, nil /*handler*/); err != nil {
+            panic(err)
+        }
+    }()
 }
 
 func CamSensorDebugHandler(w http.ResponseWriter, req *http.Request) {
@@ -125,9 +146,9 @@ func CamSensorDebugHandler(w http.ResponseWriter, req *http.Request) {
 func CamSensorLastImageHandler(cam *Camera, w http.ResponseWriter, req *http.Request) {
     img := cam.GetLast()
     if img != nil {
-        w.Header().Set("Content-Type", "image/jpeg")
+        w.Header().Set("Content-Type", "image/png")
         w.WriteHeader(http.StatusOK)
-        jpeg.Encode(w, img, nil /*Options*/)
+        png.Encode(w, img)
         return
     }
 
@@ -183,22 +204,21 @@ func (cam *Camera) CamClient(stream io.ReadCloser, m *Model) {
         if err == io.EOF {
             break loopRead
         } else if err != nil {
-            panic(err)
+            fmt.Printf("[CAM %d: %s] Unexpected NextPart error: %v\n", cam.index, cam.url.Host, err)
+            break loopRead
         }
 
         defer part.Close()
 
         img, err := jpeg.Decode(part)
         if err != nil {
-            panic(err)
+            fmt.Printf("[CAM %d: %s] Unexpected JPEG Decode error: %v\n", cam.index, cam.url.Host, err)
+            break loopRead
         }
 
-        if img.ColorModel() != color.GrayModel {
-            img = &GrayImage{ img, color.GrayModel }
-        }
-
-        cam.UpdateSensors(img, m)
-        cam.SetLast(img)
+        ci := cam.NewCamImage(img)
+        cam.UpdateSensors(ci, m)
+        cam.SetLast(ci)
 
         /* fmt.Printf("[CAM %d: %s] Decoded JPEG %d x %d\n", 
             cam.index, cam.url.Host, 
@@ -208,16 +228,16 @@ func (cam *Camera) CamClient(stream io.ReadCloser, m *Model) {
     fmt.Printf("[CAM %d: %s] READ Connection closed\n", cam.index, cam.url.Host)
 }
 
-func (cam *Camera) GetLast() image.Image {
+func (cam *Camera) GetLast() *CamImage {
     cam.mutex.Lock()
     defer cam.mutex.Unlock()
     return cam.last
 }
 
-func (cam *Camera) SetLast(img image.Image) {
+func (cam *Camera) SetLast(ci *CamImage) {
     cam.mutex.Lock()
     defer cam.mutex.Unlock()
-    cam.last = img
+    cam.last = ci
 }
 
 func (cam *Camera) SetupSensors(config string) {
@@ -233,10 +253,13 @@ func (cam *Camera) SetupSensors(config string) {
             panic(err)
         }
 
-        s.points = make([]int, CAM_N_POINTS * 2)
+        s.points = make([]image.Point, CAM_N_POINTS)
         s.values = make([]int, CAM_N_POINTS)
-        for i := 0; i < CAM_N_POINTS * 2; i++ {
-            if s.points[i], err = strconv.Atoi(result[3 + i]); err != nil {
+        for i := 0; i < CAM_N_POINTS; i++ {
+            if s.points[i].X, err = strconv.Atoi(result[3 + i*2 + 0]); err != nil {
+                panic(err)
+            }
+            if s.points[i].Y, err = strconv.Atoi(result[3 + i*2 + 1]); err != nil {
                 panic(err)
             }
         }
@@ -258,23 +281,25 @@ func (cam *Camera) DebugHtml() string {
     return content
 }
 
-func (cam *Camera) UpdateSensors(img image.Image, m *Model) {
+func (cam *Camera) UpdateSensors(img *CamImage, m *Model) {
     for _, sensor := range cam.sensors {
-        var i, j int
-        for i < CAM_N_POINTS{
-            c := img.At(sensor.points[j], sensor.points[j+1])
+        for i := 0; i < CAM_N_POINTS; i++ {
+            c := img.GrayAt(sensor.points[i].X, sensor.points[i].Y)
             sensor.values[i] = int(c.(color.Gray).Y)
-            i++
-            j += 2
 
             // value 0 is the mid point, which must be high (white)
             // values 1 & 2 are the guards (darker).
             // Expected: [0] > 128 && [1,2] < 128
             v := sensor.values
             old := sensor.empty
-            is_empty := v[0] > 128 && v[1] < 128 && v[2] < 128
+            min := v[1]
+            if v[2] > min {
+                min = v[2]
+            }
+            is_empty := v[0] > 128 && v[0] > min
             sensor.empty = is_empty
             if old != is_empty || sensor.init {
+                fmt.Printf("Cam Sensor changed: %v => %v\n", sensor.sensor, !is_empty)
                 m.SetSensor(sensor.sensor, !is_empty)
                 sensor.init = false
             }
