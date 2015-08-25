@@ -18,7 +18,9 @@ import (
     "time"
 )
 
-const CAM_N_POINTS = 3
+const CAM_N_POINTS = 9
+const CAM_THRESHOLD = 100
+const CAM_EDGE = 50
 
 var CAM_SERV = flag.String("cam-server", ":8088", "Camera debug server host:port")
 
@@ -28,8 +30,8 @@ var CAM_HOSTS = flag.String("cam-urls",
     "Cameras user:pwd@host:port/path")
 
 var CAM_SENSORS = flag.String("cam-sensors",
-    "0,38:172,142,164,142,180,142 0,37:602,145,594,145,611,145",
-    "Camera detection points: N,S:x,y,{3}...")
+    "0,38:154,121,174,120",
+    "Camera detection points: N,S:x1,y1,x2,y2...")
 
 // Typical URLs:
 // Foscam: http://foscam.ip/videostream.cgi?resolution=32&user=USER&pwd=PWD
@@ -41,6 +43,8 @@ var CAMERAS []*Camera
 
 type CamSensor struct {
     sensor  int
+    start   image.Point
+    end     image.Point
     points  []image.Point // CAM_N_POINTS pairs x/y
     values  []int // CAM_N_POINTS current values
     empty   bool
@@ -241,7 +245,7 @@ func (cam *Camera) SetLast(ci *CamImage) {
 }
 
 func (cam *Camera) SetupSensors(config string) {
-    re := regexp.MustCompile(fmt.Sprintf("([%d]),([0-9]+):([0-9]+),([0-9]+),([0-9]+),([0-9]+),([0-9]+),([0-9]+)", cam.index))
+    re := regexp.MustCompile(fmt.Sprintf("([%d]),([0-9]+):([0-9]+),([0-9]+),([0-9]+),([0-9]+)", cam.index))
 
     match := re.FindAllStringSubmatch(config, -1 /*all*/)
     for _, result := range match {
@@ -253,29 +257,58 @@ func (cam *Camera) SetupSensors(config string) {
             panic(err)
         }
 
+        s.start = _parseSensorXY(result[3:5])
+        s.end   = _parseSensorXY(result[5:7])
+
         s.points = make([]image.Point, CAM_N_POINTS)
         s.values = make([]int, CAM_N_POINTS)
+
+        var px, py float32
+        px = float32(s.start.X)
+        py = float32(s.start.Y)
+        var dx, dy float32
+        dx = (float32(s.end.X) - px) / (CAM_N_POINTS - 1)
+        dy = (float32(s.end.Y) - py) / (CAM_N_POINTS - 1)
         for i := 0; i < CAM_N_POINTS; i++ {
-            if s.points[i].X, err = strconv.Atoi(result[3 + i*2 + 0]); err != nil {
-                panic(err)
-            }
-            if s.points[i].Y, err = strconv.Atoi(result[3 + i*2 + 1]); err != nil {
-                panic(err)
-            }
+            s.points[i].X = int(px + float32(i) * dx)
+            s.points[i].Y = int(py + float32(i) * dy)
         }
 
         cam.sensors = append(cam.sensors, s)
     }
 }
 
+func _parseSensorXY(str []string) (p image.Point) {
+    var err error
+    if p.X, err = strconv.Atoi(str[0]); err != nil {
+        panic(err)
+    }
+    if p.Y, err = strconv.Atoi(str[1]); err != nil {
+        panic(err)
+    }
+    return p
+}
+
 func (cam *Camera) DebugHtml() string {
     content := fmt.Sprintf(
-        `<p/><a href='/last/%d'>Last image from camera %d</a><br/>
-         <img src='/last/%d'/><br/>`,
-        cam.index, cam.index, cam.index)
+        `<p/><a href="/last/%d">Last image from camera %d</a><br/>`,
+        cam.index, cam.index)
 
     for index, sensor := range cam.sensors {
-        content += fmt.Sprintf("[%d] %v <br/>", index, sensor)
+        content += fmt.Sprintf("[%d,%d] ", index, sensor.sensor)
+        for _, v := range sensor.values {
+            var color string
+            if v > CAM_THRESHOLD {
+                color = `style="color: red"`
+            }
+            content += fmt.Sprintf("<span %s>%d</span> ", color, v)
+        }
+        if sensor.empty {
+            content += `<span style="color: green">EMPTY</span>`
+        } else {
+            content += `<span style="color: red">occupied</span>`
+        }
+        content += "<br/>"
     }
 
     return content
@@ -283,28 +316,63 @@ func (cam *Camera) DebugHtml() string {
 
 func (cam *Camera) UpdateSensors(img *CamImage, m *Model) {
     for _, sensor := range cam.sensors {
+        v := sensor.values
         for i := 0; i < CAM_N_POINTS; i++ {
             c := img.GrayAt(sensor.points[i].X, sensor.points[i].Y)
-            sensor.values[i] = int(c.(color.Gray).Y)
+            v[i] = int(c.(color.Gray).Y)
+        }
 
-            // value 0 is the mid point, which must be high (white)
-            // values 1 & 2 are the guards (darker).
-            // Expected: [0] > 128 && [1,2] < 128
-            v := sensor.values
-            old := sensor.empty
-            min := v[1]
-            if v[2] > min {
-                min = v[2]
+        var is_empty bool
+
+        const N = CAM_N_POINTS / 2
+        var num_start, center, num_end int
+
+        // count low points on start side
+        for i := 0; i <= N; i++ {
+            if v[i] >= CAM_THRESHOLD {
+                break
             }
-            is_empty := v[0] > 128 && v[0] > min
-            sensor.empty = is_empty
-            if old != is_empty || sensor.init {
-                fmt.Printf("Cam Sensor changed: %v => %v\n", sensor.sensor, !is_empty)
-                m.SetSensor(sensor.sensor, !is_empty)
-                sensor.init = false
+            if i > 0 && _abs(v[i], v[i-1]) > CAM_EDGE {
+                break
             }
+            num_start++
+        }
+        if num_start > 0 {
+            // count low points on end side
+            for i := CAM_N_POINTS - 1; i >= N; i-- {
+                if v[i] >= CAM_THRESHOLD {
+                    break
+                }
+                if i < CAM_N_POINTS - 1 && _abs(v[i], v[i+1]) > CAM_EDGE {
+                    break
+                }
+                num_end++
+            }
+
+            if num_end > 0 {
+                center = CAM_N_POINTS - num_start - num_end
+                if center > 1 {
+                    is_empty = true
+                }
+            }
+        }
+
+        old := sensor.empty
+        sensor.empty = is_empty
+        if old != is_empty || sensor.init {
+            fmt.Printf("Cam Sensor changed: %v => %v [%d | %d | %d]\n", sensor.sensor, !is_empty, num_start, center, num_end)
+            m.SetSensor(sensor.sensor, !is_empty)
+            sensor.init = false
         }
     }
 }
+
+func _abs(a, b int) int {
+    if a < b {
+        return b - a
+    }
+    return a - b
+}
+
 
 
