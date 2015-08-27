@@ -34,6 +34,10 @@ var CAM_SENSORS = flag.String("cam-sensors",
     "0,38:154,121,174,120",
     "Camera detection points: N,S:x1,y1,x2,y2...")
 
+var CAM_OFFSETS = flag.String("cam-offsets", "0:0,0 1:0,0", "Camera sensor offsets")
+
+
+
 // Typical URLs:
 // Foscam: http://foscam.ip/videostream.cgi?resolution=32&user=USER&pwd=PWD
 // Edimax: http://USER:PWD@edimax.ip/mjpg/video.mjpg
@@ -124,6 +128,7 @@ func (ci *CamImage) GrayAt(x, y int) color.Color {
 
 func CamSensorDebugServer() {
     http.HandleFunc("/", CamSensorDebugHandler)
+    http.HandleFunc("/reload", CamSensorReloadHandler)
 
     go func() {
         if err := http.ListenAndServe(*CAM_SERV, nil /*handler*/); err != nil {
@@ -134,17 +139,51 @@ func CamSensorDebugServer() {
 
 func CamSensorDebugHandler(w http.ResponseWriter, req *http.Request) {
     content := `<html><head>
-        <meta http-equiv="refresh" content="5">
         <title>Translate Debug</title></head>
         <body>`
 
-    content += fmt.Sprintf("%d Cameras:<br/>\n", len(CAMERAS))
+    content += fmt.Sprintf("%d Cameras:<p/>\n", len(CAMERAS))
 
+    content += "<a href='/reload'>Reload config</a><p/>\n"
+
+    cams := ""
     for _, cam := range CAMERAS {
-        content += cam.DebugHtml()
+        if cams != "" {
+            cams += ", "
+        }
+        cams += fmt.Sprintf("{ index: %d }", cam.index)
+        content += fmt.Sprintf("<div id='cam%d'></div><p/>\n", cam.index)
     }
 
-    content += "</body>"
+    content += `
+<script src="//ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
+<script>
+cams = [` + cams + `];
+for (c = 0; c < cams.length; c++) {
+    var cam = cams[c]
+    cam.xh = new XMLHttpRequest();
+    cam.xh.onreadystatechange = function(cam) {
+        return function() {
+            if (cam.xh.readyState == 4 && cam.xh.status == 200) {
+                var div = $("#cam" + cam.index);
+                div.html(cam.xh.responseText);
+            }
+        }
+    }(cam);
+}
+
+setInterval(function() {
+    for (c = 0; c < cams.length; c++) {
+        var cam = cams[c]
+        var url = "/state/" + cam.index;
+        cam.xh.open("GET", url, true);
+        cam.xh.send();
+    }
+}, 2000);
+</script>
+
+</body>
+`
 
     w.Header().Set("Content-Type", "text/html; charset=utf-8")
     w.WriteHeader(http.StatusOK)
@@ -167,6 +206,25 @@ func CamSensorLastImageHandler(cam *Camera, w http.ResponseWriter, req *http.Req
 
 //-----
 
+func CamSensorReloadHandler(w http.ResponseWriter, req *http.Request) {
+    var config = NewConfig()
+    config.ReadFile(CONFIG_FILE)
+    for _, cam := range CAMERAS {
+        cam.SetupSensors(config.Get("cam-sensors", ""), config.Get("cam-offsets", ""))
+    }
+    content := `<html>
+<header>
+<title>Reload</title>
+<meta http-equiv="refresh" content="1;/">
+</header>
+<body>
+Reload complete.
+</body>`
+    w.Header().Set("Content-Type", "text/html; charset=utf-8")
+    w.WriteHeader(http.StatusOK)
+    io.WriteString(w, content)
+}
+
 func CamSensorClient(m *Model) {
     fmt.Println("Start Cam-Sensor client")
 
@@ -174,11 +232,15 @@ func CamSensorClient(m *Model) {
 
     for index, url := range urls {
         cam := NewCamera(index, url)
-        cam.SetupSensors(*CAM_SENSORS)
+        cam.SetupSensors(*CAM_SENSORS, *CAM_OFFSETS)
         CAMERAS = append(CAMERAS, cam)
         http.HandleFunc(fmt.Sprintf("/last/%d", index),
             func(w http.ResponseWriter, r *http.Request) {
                 CamSensorLastImageHandler(cam, w, r)
+            })
+        http.HandleFunc(fmt.Sprintf("/state/%d", index),
+            func(w http.ResponseWriter, r *http.Request) {
+                io.WriteString(w, cam.DebugHtml())
             })
 
         go func(cam *Camera) {
@@ -271,27 +333,42 @@ func (cam *Camera) SetLast(ci *CamImage) {
     cam.last = ci
 }
 
-func (cam *Camera) SetupSensors(config string) {
-    re := regexp.MustCompile(fmt.Sprintf("([%d]),([0-9]+):([0-9]+),([0-9]+),([0-9]+),([0-9]+)", cam.index))
+func (cam *Camera) SetupSensors(config, offsets string) {
+    var err error
+    re := regexp.MustCompile(fmt.Sprintf("([%d]):(-?[0-9]+),(-?[0-9]+)", cam.index))
+    var offset image.Point
+    if match := re.FindStringSubmatch(offsets); match != nil {
+        offset = _parsePoint(match[2:])
+    }
+    fmt.Printf("[CAM %d: %s] Setup sensors with offset %v\n", cam.index, cam.url.Host, offset)
+
+    re = regexp.MustCompile(fmt.Sprintf("([%d]),([0-9]+):([0-9]+),([0-9]+),([0-9]+),([0-9]+)", cam.index))
 
     match := re.FindAllStringSubmatch(config, -1 /*all*/)
-    for _, result := range match {
-        s := &CamSensor{}
+    if cam.sensors == nil {
+        cam.sensors = make([]*CamSensor, len(match))
+        for i := range match {
+            cam.sensors[i] = &CamSensor{}
+        }
+    }
+    for index, result := range match {
+        s := cam.sensors[index]
         s.init = true
         s.min = 0
         s.max = 255
         s.threshold = (s.min + s.max) / 2
 
-        var err error
         if s.sensor, err = strconv.Atoi(result[2]); err != nil {
             panic(err)
         }
 
-        s.start = _parseSensorXY(result[3:5])
-        s.end   = _parseSensorXY(result[5:7])
+        s.start = _offset(_parsePoint(result[3:5]), offset)
+        s.end   = _offset(_parsePoint(result[5:7]), offset)
 
-        s.points = make([]image.Point, CAM_N_POINTS)
-        s.values = make([]int, CAM_N_POINTS)
+        if s.points == nil {
+            s.points = make([]image.Point, CAM_N_POINTS)
+            s.values = make([]int, CAM_N_POINTS)
+        }
 
         var px, py float32
         px = float32(s.start.X)
@@ -303,12 +380,10 @@ func (cam *Camera) SetupSensors(config string) {
             s.points[i].X = int(px + float32(i) * dx)
             s.points[i].Y = int(py + float32(i) * dy)
         }
-
-        cam.sensors = append(cam.sensors, s)
     }
 }
 
-func _parseSensorXY(str []string) (p image.Point) {
+func _parsePoint(str []string) (p image.Point) {
     var err error
     if p.X, err = strconv.Atoi(str[0]); err != nil {
         panic(err)
@@ -319,9 +394,13 @@ func _parseSensorXY(str []string) (p image.Point) {
     return p
 }
 
+func _offset(p, o image.Point) image.Point {
+    return image.Point { p.X + o.X, p.Y + o.Y }
+}
+
 func (cam *Camera) DebugHtml() string {
     content := fmt.Sprintf(
-        `<p/><a href="/last/%d">Last image from camera %d</a><br/>`,
+        `<a href="/last/%d">Last image from camera %d</a><br/>`,
         cam.index, cam.index)
 
     for index, s := range cam.sensors {
