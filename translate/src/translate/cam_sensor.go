@@ -1,6 +1,7 @@
 package translate
 
 import (
+    "bufio"
     "flag"
     "fmt"
     "io"
@@ -49,11 +50,15 @@ type CamSensor struct {
     values  []int // CAM_N_POINTS current values
     empty   bool
     init    bool
+    min     int
+    max     int
+    threshold int
 }
 
 type Camera struct {
     index   int
     url     *net_url.URL
+    boundary string
     mutex   sync.Mutex
     last    *CamImage
     sensors []*CamSensor
@@ -81,7 +86,6 @@ func NewCamera(index int, url_str string) *Camera {
 type CamImage struct {
     cam   *Camera
     img   image.Image
-    //--model color.Model
 }
 
 func (cam *Camera) NewCamImage(source image.Image) *CamImage {
@@ -90,7 +94,7 @@ func (cam *Camera) NewCamImage(source image.Image) *CamImage {
 }
 
 func (ci *CamImage) ColorModel() color.Model {
-    return color.RGBAModel     // -- ci.img.ColorModel()
+    return color.RGBAModel
 }
 
 // Return the original bounds
@@ -198,10 +202,33 @@ func CamSensorClient(m *Model) {
 func (cam *Camera) CamClient(stream io.ReadCloser, m *Model) {
     fmt.Printf("[CAM %d: %s] New READ connection\n", cam.index, cam.url.Host)
 
-    boundary := "ipcamera" // TODO
-
     defer stream.Close()
-    reader := multipart.NewReader(stream, boundary)
+
+    if cam.boundary == "" {
+        // First figure what is the multipart boundary. Simply read
+        // the stream til we find a line starting with --
+        r := bufio.NewReader(stream)
+        for !m.IsQuitting() {
+            str, err := r.ReadString('\n')
+            if err != nil {
+                fmt.Printf("[CAM %d: %s] Unexpected boundary error: %v\n", cam.index, cam.url.Host, err)
+                break
+            }
+            if strings.HasPrefix(str, "--") {
+                str = strings.TrimSpace(str[2:])
+                if strings.HasSuffix(str, "--") {
+                    str = str[:len(str) - 2]
+                }
+                cam.boundary = str
+                fmt.Printf("[CAM %d: %s] Multipart Boundary: %s\n", cam.index, cam.url.Host, str)
+                break
+            }
+        }
+
+        return
+    }
+
+    reader := multipart.NewReader(stream, cam.boundary)
 
     loopRead: for !m.IsQuitting() {
         part, err := reader.NextPart()
@@ -251,6 +278,9 @@ func (cam *Camera) SetupSensors(config string) {
     for _, result := range match {
         s := &CamSensor{}
         s.init = true
+        s.min = 0
+        s.max = 255
+        s.threshold = (s.min + s.max) / 2
 
         var err error
         if s.sensor, err = strconv.Atoi(result[2]); err != nil {
@@ -294,16 +324,16 @@ func (cam *Camera) DebugHtml() string {
         `<p/><a href="/last/%d">Last image from camera %d</a><br/>`,
         cam.index, cam.index)
 
-    for index, sensor := range cam.sensors {
-        content += fmt.Sprintf("[%d,%d] ", index, sensor.sensor)
-        for _, v := range sensor.values {
+    for index, s := range cam.sensors {
+        content += fmt.Sprintf("[%d,%d] [%d | %d | %d] ", index, s.sensor, s.min, s.threshold, s.max)
+        for _, v := range s.values {
             var color string
-            if v > CAM_THRESHOLD {
+            if v > s.threshold {
                 color = `style="color: red"`
             }
             content += fmt.Sprintf("<span %s>%d</span> ", color, v)
         }
-        if sensor.empty {
+        if s.empty {
             content += `<span style="color: green">EMPTY</span>`
         } else {
             content += `<span style="color: red">occupied</span>`
@@ -315,12 +345,32 @@ func (cam *Camera) DebugHtml() string {
 }
 
 func (cam *Camera) UpdateSensors(img *CamImage, m *Model) {
-    for _, sensor := range cam.sensors {
-        v := sensor.values
+    for _, s := range cam.sensors {
+        v := s.values
+        min := 255
+        max := 0
         for i := 0; i < CAM_N_POINTS; i++ {
-            c := img.GrayAt(sensor.points[i].X, sensor.points[i].Y)
+            c := img.GrayAt(s.points[i].X, s.points[i].Y)
             v[i] = int(c.(color.Gray).Y)
+            if v[i] < min {
+                min = v[i]
+            }
+            if v[i] > max {
+                max = v[i]
+            }
         }
+
+        const T = 10
+        const T1 = T-1
+        min = (min + T1 * s.min) / T
+        max = (max + T1 * s.max) / T
+        if max < CAM_THRESHOLD {
+            max = CAM_THRESHOLD
+        }
+        threshold := (min + 2 * max) / 3
+        s.min = min
+        s.max = max
+        s.threshold = threshold
 
         var is_empty bool
 
@@ -329,23 +379,23 @@ func (cam *Camera) UpdateSensors(img *CamImage, m *Model) {
 
         // count low points on start side
         for i := 0; i <= N; i++ {
-            if v[i] >= CAM_THRESHOLD {
+            if v[i] >= threshold {
                 break
             }
-            if i > 0 && _abs(v[i], v[i-1]) > CAM_EDGE {
+            /* if i > 0 && _abs(v[i], v[i-1]) > CAM_EDGE {
                 break
-            }
+            } */
             num_start++
         }
         if num_start > 0 {
             // count low points on end side
             for i := CAM_N_POINTS - 1; i >= N; i-- {
-                if v[i] >= CAM_THRESHOLD {
+                if v[i] >= threshold {
                     break
                 }
-                if i < CAM_N_POINTS - 1 && _abs(v[i], v[i+1]) > CAM_EDGE {
+                /* if i < CAM_N_POINTS - 1 && _abs(v[i], v[i+1]) > CAM_EDGE {
                     break
-                }
+                } */
                 num_end++
             }
 
@@ -357,12 +407,12 @@ func (cam *Camera) UpdateSensors(img *CamImage, m *Model) {
             }
         }
 
-        old := sensor.empty
-        sensor.empty = is_empty
-        if old != is_empty || sensor.init {
-            fmt.Printf("Cam Sensor changed: %v => %v [%d | %d | %d]\n", sensor.sensor, !is_empty, num_start, center, num_end)
-            m.SetSensor(sensor.sensor, !is_empty)
-            sensor.init = false
+        old := s.empty
+        s.empty = is_empty
+        if old != is_empty || s.init {
+            fmt.Printf("Cam Sensor changed: %v => %v [%d | %d | %d] %v\n", s.sensor, !is_empty, num_start, center, num_end, v)
+            m.SetSensor(s.sensor, !is_empty)
+            s.init = false
         }
     }
 }

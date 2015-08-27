@@ -7,6 +7,7 @@ import (
     "io"
     "os"
     "regexp"
+    "strings"
 )
 
 type Config map[string] string
@@ -45,8 +46,11 @@ func (c *Config) parse(r *bufio.Reader) error {
         } else if err != nil {
             panic(fmt.Sprintf("[CONFIG] Error reading config file: %v", err))
         }
-        fields := CONFIG_LINE_RE.FindStringSubmatch(line)
-        (*c)[fields[1]] = fields[2]
+        line = strings.TrimSpace(line)
+        if line != "" {
+            fields := CONFIG_LINE_RE.FindStringSubmatch(line)
+            (*c)[fields[1]] = fields[2]
+        }
     }
     fmt.Printf("[CONFIG] Read %d key/values from config file\n", len(*c))
     return nil
