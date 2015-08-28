@@ -19,9 +19,10 @@ import (
     "time"
 )
 
-const CAM_N_POINTS = 9
+const CAM_N_POINTS = 12
 const CAM_THRESHOLD = 100
-const CAM_EDGE = 50
+const CAM_N_ACTIVE = 3
+const CAM_MIN_MAX_DELTA = 50
 
 var CAM_SERV = flag.String("cam-server", ":8088", "Camera debug server host:port")
 
@@ -456,32 +457,28 @@ func (cam *Camera) UpdateSensors(img *CamImage, m *Model) {
         const N = CAM_N_POINTS / 2
         var num_start, center, num_end int
 
-        // count low points on start side
-        for i := 0; i <= N; i++ {
-            if v[i] >= threshold {
-                break
-            }
-            /* if i > 0 && _abs(v[i], v[i-1]) > CAM_EDGE {
-                break
-            } */
-            num_start++
-        }
-        if num_start > 0 {
-            // count low points on end side
-            for i := CAM_N_POINTS - 1; i >= N; i-- {
+        if _abs(min, max) >= CAM_MIN_MAX_DELTA {
+            // count low points on start side
+            for i := 0; i <= N; i++ {
                 if v[i] >= threshold {
                     break
                 }
-                /* if i < CAM_N_POINTS - 1 && _abs(v[i], v[i+1]) > CAM_EDGE {
-                    break
-                } */
-                num_end++
+                num_start++
             }
+            if num_start >= CAM_N_ACTIVE {
+                // count low points on end side
+                for i := CAM_N_POINTS - 1; i >= N; i-- {
+                    if v[i] >= threshold {
+                        break
+                    }
+                    num_end++
+                }
 
-            if num_end > 0 {
-                center = CAM_N_POINTS - num_start - num_end
-                if center > 1 {
-                    is_empty = true
+                if num_end >= CAM_N_ACTIVE {
+                    center = CAM_N_POINTS - num_start - num_end
+                    if center >= CAM_N_ACTIVE {
+                        is_empty = true
+                    }
                 }
             }
         }
