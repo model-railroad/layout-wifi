@@ -2,6 +2,7 @@ package translate
 
 import (
     "bufio"
+    "bytes"
     "flag"
     "fmt"
     "io"
@@ -254,6 +255,8 @@ func CamSensorClient(m *Model) {
                     fmt.Printf("[CAM %d: %s] READ Connection error: %v\n", cam.index, cam.url.Host, err)
                     time.Sleep(5 * time.Second)
 
+                } else if strings.HasPrefix(cam.url.Host, "dlink") {
+                    cam.CamClientDlink(resp.Body, m)
                 } else {
                     cam.CamClient(resp.Body, m)
                 }
@@ -316,6 +319,72 @@ func (cam *Camera) CamClient(stream io.ReadCloser, m *Model) {
 
         /* fmt.Printf("[CAM %d: %s] Decoded JPEG %d x %d\n", 
             cam.index, cam.url.Host, 
+            img.Bounds().Dx(), img.Bounds().Dy())
+        */
+    }
+    fmt.Printf("[CAM %d: %s] READ Connection closed\n", cam.index, cam.url.Host)
+}
+
+// The dlink multipart mjpeg stream doesn't start with a --boundary and
+// this doesn't work with the regular multipart reader.
+func (cam *Camera) CamClientDlink(stream io.ReadCloser, m *Model) {
+    fmt.Printf("[CAM %d: %s] New DLINK READ connection\n", cam.index, cam.url.Host)
+
+    defer stream.Close()
+
+    r := bufio.NewReader(stream)
+
+    loopRead: for !m.IsQuitting() {
+        // Find Content-length header
+        contentLength := 0
+        loopContentLength: for !m.IsQuitting() {
+            str, err := r.ReadString('\n')
+            if err == nil && strings.HasPrefix(str, "Content-length: ") {
+                contentLength, err = strconv.Atoi(strings.TrimSpace(str[16:]))
+                break loopContentLength
+            }
+            if err != nil {
+                fmt.Printf("[CAM %d: %s] Dlink Content-length error: %v\n", cam.index, cam.url.Host, err)
+                break loopRead
+            }
+        }
+
+        // Skip read of header till empty line delimiter
+        loopHeader: for !m.IsQuitting() {
+            str, err := r.ReadString('\n')
+            if err == nil && str == "\r\n" {
+                break loopHeader
+            }
+            if err != nil {
+                fmt.Printf("[CAM %d: %s] Dlink header error: %v\n", cam.index, cam.url.Host, err)
+                break loopRead
+            }
+        }
+
+        dest := make([]byte, contentLength)
+
+        for pos := 0; pos < contentLength; {
+            n, err := r.Read(dest[pos:])
+            if err != nil {
+                fmt.Printf("[CAM %d: %s] Dlink data error: %v\n", cam.index, cam.url.Host, err)
+                break loopRead
+            }
+            pos += n
+        }
+
+        r2 := bytes.NewReader(dest)
+        img, err := jpeg.Decode(r2)
+        if err != nil {
+            fmt.Printf("[CAM %d: %s] Unexpected JPEG Decode error: %v\n", cam.index, cam.url.Host, err)
+            break loopRead
+        }
+
+        ci := cam.NewCamImage(img)
+        cam.UpdateSensors(ci, m)
+        cam.SetLast(ci)
+
+        /* fmt.Printf("[CAM %d: %s] Decoded JPEG %d x %d\n",
+            cam.index, cam.url.Host,
             img.Bounds().Dx(), img.Bounds().Dy())
         */
     }
