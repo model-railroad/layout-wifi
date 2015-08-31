@@ -20,7 +20,7 @@ var CONFIG = NewConfig()
 
 func init() {
     flag.BoolVar(&LW_SERV, "simulate", false, "Simulate LayoutWifi server")
-    
+
     filename := "~/.translaterc"
     if usr, err := user.Current(); err == nil {
         filename = filepath.Join(usr.HomeDir, filename[2:])
@@ -71,7 +71,7 @@ func TerminalLoop(m *Model, sensors_chan chan<- LwSensor) {
             if index, err :=  strconv.Atoi(fields[1]); err == nil {
                 sensors_chan <- LwSensor { uint(index), false }
             }
-        
+
         default:
             fmt.Println("Unknown command. Use quit or q.")
         }
@@ -90,7 +90,7 @@ func Main() {
     SrcpServer(model)
     CamSensorClient(model)
     CamSensorDebugServer()
-    
+
     var sensors_chan chan LwSensor
     if (LW_SERV) {
         // Simulate DigiX server

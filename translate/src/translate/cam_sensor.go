@@ -43,6 +43,7 @@ var CAM_OFFSETS = flag.String("cam-offsets", "0:0,0 1:0,0", "Camera sensor offse
 // Typical URLs:
 // Foscam: http://foscam.ip/videostream.cgi?resolution=32&user=USER&pwd=PWD
 // Edimax: http://USER:PWD@edimax.ip/mjpg/video.mjpg
+// D-Link: http://USER:PWD@dlink.ip/mjepg.cgi
 
 //-----
 
@@ -52,8 +53,8 @@ type CamSensor struct {
     sensor  int
     start   image.Point
     end     image.Point
-    points  []image.Point // CAM_N_POINTS pairs x/y
-    values  []int // CAM_N_POINTS current values
+    points  []image.Point   // CAM_N_POINTS pairs x/y
+    values  []int           // CAM_N_POINTS current values
     empty   bool
     init    bool
     min     int
@@ -112,9 +113,13 @@ func (ci *CamImage) Bounds() image.Rectangle {
 // uses the color model to convert it.
 func (ci *CamImage) At(x, y int) color.Color {
     for _, s := range ci.cam.sensors {
-        for _, p := range s.points {
+        for i, p := range s.points {
             if p.X == x && p.Y == y {
-                return color.RGBA{0xFF, 0x00, 0x00, 0xFF}
+                if s.empty && s.values[i] > s.threshold {
+                    return color.RGBA{0x00, 0xFF, 0x00, 0xFF}
+                } else {
+                    return color.RGBA{0xFF, 0x00, 0x00, 0xFF}
+                }
             }
         }
     }
@@ -139,14 +144,36 @@ func CamSensorDebugServer() {
     }()
 }
 
+func _getPort(s string) string {
+    i := strings.LastIndex(s, ":")
+    if i != -1 {
+        return s[i+1:]
+    }
+    return s
+}
+
 func CamSensorDebugHandler(w http.ResponseWriter, req *http.Request) {
     content := `<html><head>
-        <title>Translate Debug</title></head>
-        <body>`
+        <title>Translate Server Status</title></head>
+        <body><h2>Translate Server</h2>
+        <table><tr><td><ul>`
 
-    content += fmt.Sprintf("%d Cameras:<p/>\n", len(CAMERAS))
+    content += fmt.Sprintf("<li>SRCP Server: %s</li>\n", _getPort(*SRCP_PORT))
+    content += fmt.Sprintf("<li>NCE Server: %s</li>\n", _getPort(*NCE_PORT))
+    content += fmt.Sprintf("<li>Status Server: %s</li>\n", _getPort(*CAM_SERV))
+    content += "</ul></td><td><ul>\n"
+    content += fmt.Sprintf("<li>LayoutWifi Arduino: %s</li>\n", _getPort(*LW_CLIENT_PORT))
+    if LW_SERV {
+        content += fmt.Sprintf("<li>LayoutWifi Simulator: %s</li>\n", _getPort(*LW_SERV_PORT))
+    } else {
+        content += "<li>LayoutWifi Simulator: stopped</li>\n"
+    }
+    content += fmt.Sprintf("<li>Sensor Cameras: %d</li>\n", len(CAMERAS))
+
+    content += "</ul></td></tr></table>\n"
 
     content += "<a href='/reload'>Reload config</a><p/>\n"
+    content += "<table><tr>\n"
 
     cams := ""
     for _, cam := range CAMERAS {
@@ -154,8 +181,19 @@ func CamSensorDebugHandler(w http.ResponseWriter, req *http.Request) {
             cams += ", "
         }
         cams += fmt.Sprintf("{ index: %d }", cam.index)
-        content += fmt.Sprintf("<div id='cam%d'></div><p/>\n", cam.index)
+        content += fmt.Sprintf("<td><div id='cam%d'></div></td>\n", cam.index)
     }
+    content += "</tr><tr>\n"
+    for _, cam := range CAMERAS {
+        content += strings.Replace(
+        `<td>
+        Camera @@:
+        <a href="/last/@@" target="_blank">Open in new tab</a> | <a href="#" id="refresh@@">Refresh</a><br/>
+        <img id="img@@" src="/last/@@" />
+        </td>`,
+        "@@", strconv.Itoa(cam.index), -1)
+    }
+    content += "</tr></table>\n"
 
     content += `
 <script src="//ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
@@ -172,6 +210,12 @@ for (c = 0; c < cams.length; c++) {
             }
         }
     }(cam);
+
+    $("#refresh" + cam.index).click(function(cam) {
+        return function() {
+            $("#img" + cam.index).attr("src", "/last/" + cam.index + "?" + new Date().getTime());
+        }
+    }(cam));
 }
 
 setInterval(function() {
@@ -469,9 +513,12 @@ func _offset(p, o image.Point) image.Point {
 }
 
 func (cam *Camera) DebugHtml() string {
+    content := ""
+    /*
     content := fmt.Sprintf(
         `<a href="/last/%d">Last image from camera %d</a><br/>`,
         cam.index, cam.index)
+    */
 
     for index, s := range cam.sensors {
         content += fmt.Sprintf("[%d,%d] [%d | %d | %d] ", index, s.sensor, s.min, s.threshold, s.max)
