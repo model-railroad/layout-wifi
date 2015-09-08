@@ -154,9 +154,13 @@ func _getPort(s string) string {
 
 func CamSensorDebugHandler(w http.ResponseWriter, req *http.Request) {
     content := `<html><head>
-        <title>Translate Server Status</title></head>
+        <title>Translate Server Status</title>
+        <style>
+        .overview { font-family: monospace; }
+        </style>
+        </head>
         <body><h2>Translate Server</h2>
-        <table><tr><td><ul>`
+        <table width="100%"><tr"><td><ul>`
 
     content += fmt.Sprintf("<li>SRCP Server: %s</li>\n", _getPort(*SRCP_PORT))
     content += fmt.Sprintf("<li>NCE Server: %s</li>\n", _getPort(*NCE_PORT))
@@ -181,7 +185,7 @@ func CamSensorDebugHandler(w http.ResponseWriter, req *http.Request) {
             cams += ", "
         }
         cams += fmt.Sprintf("{ index: %d }", cam.index)
-        content += fmt.Sprintf("<td><div id='cam%d'></div></td>\n", cam.index)
+        content += fmt.Sprintf("<td style='vertical-align: top'><div id='cam%d' class='overview'></div></td>\n", cam.index)
     }
     content += "</tr><tr>\n"
     for _, cam := range CAMERAS {
@@ -200,22 +204,36 @@ func CamSensorDebugHandler(w http.ResponseWriter, req *http.Request) {
 <script>
 cams = [` + cams + `];
 for (c = 0; c < cams.length; c++) {
-    var cam = cams[c]
+    var cam = cams[c];
+    cam.overview = "";
     cam.xh = new XMLHttpRequest();
     cam.xh.onreadystatechange = function(cam) {
         return function() {
             if (cam.xh.readyState == 4 && cam.xh.status == 200) {
                 var div = $("#cam" + cam.index);
                 div.html(cam.xh.responseText);
+                var o = cam.xh.responseText.match(/\|[-o]+\|/);
+                if (o != null) {
+                    o = o[0].trim();
+                    if (o != cam.overview) {
+                        console.log("Cam " + cam.index + " changed " + cam.overview + " => " + o);
+                        cam.overview = o;
+                        cam.img_refresher();
+                    }
+                }
             }
         }
     }(cam);
 
-    $("#refresh" + cam.index).click(function(cam) {
+    cam.img_refresher = function(cam) {
         return function() {
-            $("#img" + cam.index).attr("src", "/last/" + cam.index + "?" + new Date().getTime());
+            var img = $("#img" + cam.index);
+            img.attr("src", "/last/" + cam.index + "?" + new Date().getTime());
+            console.log("Update #img" + cam.index + " to " + img.attr("src"));
+            return false;
         }
-    }(cam));
+    }(cam);
+    $("#refresh" + cam.index).click(cam.img_refresher);
 }
 
 setInterval(function() {
@@ -513,31 +531,30 @@ func _offset(p, o image.Point) image.Point {
 }
 
 func (cam *Camera) DebugHtml() string {
-    content := ""
-    /*
-    content := fmt.Sprintf(
-        `<a href="/last/%d">Last image from camera %d</a><br/>`,
-        cam.index, cam.index)
-    */
+    content := "<br/>"
+    overview := "|"
 
     for index, s := range cam.sensors {
-        content += fmt.Sprintf("[%d,%d] [%d | %d | %d] ", index, s.sensor, s.min, s.threshold, s.max)
+        content += fmt.Sprintf("[%2d,%3d] [%02X | %02X | %02X] ", index, s.sensor, s.min, s.threshold, s.max)
         for _, v := range s.values {
             var color string
             if v > s.threshold {
                 color = `style="color: red"`
             }
-            content += fmt.Sprintf("<span %s>%d</span> ", color, v)
+            content += fmt.Sprintf("<span %s>%02X</span> ", color, v)
         }
         if s.empty {
             content += `<span style="color: green">EMPTY</span>`
+            overview += "-"
         } else {
             content += `<span style="color: red">occupied</span>`
+            overview += "o"
         }
         content += "<br/>"
     }
+    overview += "|\n"
 
-    return content
+    return overview + content
 }
 
 func (cam *Camera) UpdateSensors(img *CamImage, m *Model) {
