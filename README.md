@@ -2,8 +2,9 @@
 
 This repository contains 3 utilities that I use to manage my H0 model-train DCC layout at home:
 
-* **LayoutWifi** runs on a DigiX (an Arduino clone) to control physical turnouts and sensors.
-* **Translate** is a service that interfaces LayoutWifi to both RocRail or JMRI. 
+* **LayoutWifi** runs on a [DigiX](http://digistump.com/products/50) (an Arduino clone)
+  to control physical turnouts and sensors.
+* **Translate** is a service that interfaces LayoutWifi to both [RocRail](http://rocrail.net) or [JMRI](http://jmri.sourceforge.net/). 
 * **Translate** also performs train block detection by analyzing nigh-vision IP cameras.
 
 The 3 pieces are designed to work together.
@@ -22,15 +23,17 @@ To really automate a train layout, we need 2 more important pieces:
 In my case, the setup works as follows:
 
 * A linux server runs RocRail or JMRI. This is the automating software.
-* The DigiX arduino controls relays that switch the turnouts -- this is the LayoutWifi software.
+* The DigiX arduino controls relays that switches the turnouts -- this is the LayoutWifi software.
 * The linux server also runs Translate, which offers the following services:
     * On one side, it connects to the LayoutWifi software on the DigiX to send turnouts commands and receive turnout feedback information.
-    * On the other side, it connect to one or more IP cameras and analyze the images to provide block occupancy sensors.
+    * On the other side, it connects to one or more IP cameras and analyzes the images to provide block occupancy sensors.
     * Finally it interfaces with RocRail via an SRCP protocol or with JMRI via an NCE binary protocol.
+
+In other words:
 
 ~~~~
   DigiX                         +---[SRCP]---> RocRail ---+
-LayoutWifi <----> Translate <---|                           |---> NCE USB ---> NCE Booster / DCC
+LayoutWifi <----> Translate <---|                         |---> NCE USB ---> NCE Booster / DCC
     |                 ^         +---[NCE]----> JMRI ------+
     v                 |
  turnouts          ip-cams
@@ -60,16 +63,16 @@ There's probably a reason for this.
 Speaking of rationale, what's with the SRCP vs NCE binary protocols?
 
 I needed a way to interface my server with both RocRail and JMRI.
-After looking at both, I choose to implement an existing protocol to talk to RocRail and JMRI instead of writing an extension to these 2 softwares. They both support a large variety of custom closed protocols. After looking at a variety, I settled down on SRCP -- it's a fairly simple protocol and it's well documented. The RocRail implementation is good and solid. There's also a microSRCP protocol that seemed adequate for use on the arduino.
+After looking at both, I choose to implement an existing protocol to talk to RocRail and JMRI instead of writing an extension to these 2 softwares. They both support a large variety of custom closed protocols. After looking at a variety, I settled down on [SRCP](http://srcpd.sourceforge.net/srcp/) -- it's a fairly simple protocol, it's open and it's well documented. The RocRail implementation is good and solid. There's also a [microSRCP](https://github.com/mc-b/microSRCP) implementation that seemed adequate for use on the arduino.
 
-However it turned out that JMRI doesn't support SRCP correctly. JMRI 3.9's SRCP implementation doesn't follow the spec at all. Instead I reverted to the NCE binary protocol which is used by their boosters in serial mode or by the NCE USB interface that I have, since I know that one pretty well and it's properly implemented in JMRI's code.
+However it turned out that JMRI doesn't support SRCP correctly. Not even close. JMRI 3.9's SRCP implementation bares no logical similarity with the spec at all. Instead I reverted to the NCE binary protocol which is used by their boosters in serial mode or by the NCE USB interface that I have, since I know that one pretty well and it's properly implemented in JMRI's code.
 
 As for microSRCP, I unfortunately couldn't use it since the DigiX wifi interface works as a serial port, not using a socket concept, so there can't be 2 connections at the same time for the INFO vs COMMAND channels. Instead I made up a mini character protocol and the Translate server does the interface.
 
 
 ## LayoutWifi ##
 
-LayoutWifi runs on [http://digistump.com/products/50](DigiX), an arduino clone that has wifi support, sdcard support and a [tons of i/o pins](http://digistump.com/wiki/digix/tutorials/pinout).
+LayoutWifi runs on [DigiX](http://digistump.com/products/50), an arduino clone that has wifi support, sdcard support and a [ton of i/o pins](http://digistump.com/wiki/digix/tutorials/pinout).
 
 
 To run the unit tests:
@@ -94,6 +97,8 @@ Features of the software, which can be changed via parameters in
 * By default, up to 8 turnouts can be controlled.
 * Turnouts are controlled via pins 90-105. 
     * Even pins put turnouts in normal state, odd pins in reverse state.
+    * It sends a 100 ms positive pulse on the output pin, which is good to trigger twin-coil turnouts.
+    * If you control tortoise-style slow-motion turnout instead, you'll want to change it to keep the relays on.
 * The software was designed to emulate NCE AIU cards to report sensor information.
     * Each card can have up to 14 sensor inputs.
 * Up to 4 AIUs are supported.
@@ -120,10 +125,10 @@ The protocol to communicate with the Translate server is quite simple:
 * Commands sent by LayoutWifi from the DigiX to the Translate server:
     * `@S01ABCD\n` represents an AIU 14-bit state.
         * The first 2 digits (`01` in the example) indicate the AIU card number. The value is 1-based.
-        * The second 4 hexa diits (`ABCD` in the example) indicate the sensors bit state in big endian.
+        * The second 4 hexa digits (`ABCD` in the example) indicate the sensors bit state in big endian.
           Since AIU cards have 14 bits each, the max value is thus 0x3FFFF.
 * There is no command to retrieve sensor state. Instead the arduino polls sensors every 10 milliseconds
-  are reports sensor status if anything as changed.
+  and reports sensor status if anything as changed.
 * Turnout states are also reported as sensor states on AIUs 1 and 2.
     * The current configuration supports 8 turnouts, so obvioulsy only AIU #1 on bits 1-8 is currently used.
     * Sensors bits are set to 0 for a turnout in normal direction and 1 for a turnout in reverse direction.
@@ -131,7 +136,7 @@ The protocol to communicate with the Translate server is quite simple:
 
 ## Translate ##
 
-Translate a simple server written in Go. It runs a variety of services on the following default ports:
+Translate is a simple server written in Go. It runs a variety of services on the following default ports:
 
 * An SRCP server on port 4303, to communicate with RocRail.
 * An NCE binary server on port 8080, to communicate with JMRI.
@@ -188,7 +193,7 @@ Let's start with the interesting part.
 
 In this first version, cameras are managed by creating a `~/.translaterc` file.
 
-Here's an example of what one would look like.i
+Here's an example of what one would look like.
 Take the following snippet, save it in ~/.translaterc and _then_ start `bin/translate --simulate`:
 
 ~~~~
@@ -214,8 +219,8 @@ Let's go over these parameters:
     * This is a **comma-separated** list.
     * The order: camera 0 is the first one in the list, camera 1 the next one, etc.
     * See below for more information on which cameras are supported.
-* `cam-sensors` is a **space-separated** list of sensors.i
-    * The syntax for each sensor is "camera number - sensor number : x1,y1,x2,y2".
+* `cam-sensors` is a **space-separated** list of sensors.
+    * The syntax for each sensor is `camera#,sensor#:x1,y1,x2,y2`.
     * Camera number is a 0-based value matching the cameras from `cam-urls`.
     * Sensor number is the sensor id that must be reported back to RocRail or JMRI.
       See below for sensor numbers.
@@ -327,14 +332,3 @@ To figure the sensor segments, what I do is:
 Tip: in the [status page](http://localhost:8088) you can use the "Reload Config" link to force Translate
 to re-read the ~/.translaterc file.
 This however is _only safe to do if you do **not change** the number of sensors_.
-
-
-
-
-
-
-
-
- 
-
-
