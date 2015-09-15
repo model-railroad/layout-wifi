@@ -332,3 +332,41 @@ To figure the sensor segments, what I do is:
 Tip: in the [status page](http://localhost:8088) you can use the "Reload Config" link to force Translate
 to re-read the ~/.translaterc file.
 This however is _only safe to do if you do **not change** the number of sensors_.
+
+
+### Configuring RocRail ###
+
+**Controller**
+
+You first need to configure RocRail's controller to connect to Translate:
+
+* Make sure `bin/translate` is running.
+* Open your RocView workspace.
+* Select File > Rocrail Properties > Controller tab
+* In "new" select the "srcp" type and click "Add"
+* Select the new srcp controller and click "Properties"
+* Set the srcp controller's hostname to "localhost", port "4303" and sub-library "TCPIP".
+  The device value is not used.
+* Close and restart Rocview/Rocrail.
+
+
+**Sensors**
+
+You'll want to define 2 type of sensors:
+
+* Sensors for the turnout feedback if you're using LayoutWifi on a DigiX.
+* Sensors for the IP camera for block detection.
+
+These are done the same way. Remember that sensor numbers are purely a convention.
+
+To define sensors:
+
+* Open Tables > Sensors.
+* Click New, select the new sensor.
+* In General, give it a name that is meaningful for your usage pattern.
+* In Interface, select the srcp interface, use bus address 8. The address is the sensor number.
+
+If you use LayoutWifi for turnouts, turnout sensor feedback uses sensor ID 1-14. Everything else is free to use.
+
+
+
