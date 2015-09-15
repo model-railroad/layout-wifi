@@ -349,24 +349,50 @@ You first need to configure RocRail's controller to connect to Translate:
   The device value is not used.
 * Close and restart Rocview/Rocrail.
 
-
 **Sensors**
 
 You'll want to define 2 type of sensors:
 
-* Sensors for the turnout feedback if you're using LayoutWifi on a DigiX.
+* Sensors for the turnout feedback if you're using LayoutWifi on a DigiX (see next section for defining turnouts).
 * Sensors for the IP camera for block detection.
 
-These are done the same way. Remember that sensor numbers are purely a convention.
+Both are done the same way. Remember that sensor numbers are purely a convention.
 
 To define sensors:
 
 * Open Tables > Sensors.
 * Click New, select the new sensor.
-* In General, give it a name that is meaningful for your usage pattern.
-* In Interface, select the srcp interface, use bus address 8. The address is the sensor number.
+* In _General_, give it a name that is meaningful for your usage pattern.
+* In _Interface_, select the srcp interface.
+    * Bus address is 8. 
+    * The address is the sensor number.
 
 If you use LayoutWifi for turnouts, turnout sensor feedback uses sensor ID 1-14. Everything else is free to use.
 
+**Turnouts**
 
+To define turnouts:
+
+* Open Tables > Switches.
+* Click New, select the new turnout.
+* In _General_, give it a name that is meaningful for your usage pattern.
+* In _Interface_, select the srcp interface.
+    * Bus address is 7.
+    * The address number is the turnout number in Translate and LayoutWifi and must be between 1 and 8. 
+    * The port number is 0. Parameter is 0, value is 1.
+    * Type is an output (the default.)
+    * Invert must be unchecked (the default.)
+    * Check the "Switch time" option and give it a time of 250 ms.
+    * Check the "Synchronize" option.
+* Open the _Wiring_ tab to define sensor feedback.
+    * Set both "sensor turnout" and "sensor straight" to the sensor that you defined in the sensors table and matches the same turnout number.
+    * Uncheck "Invert" for "sensor turnout" and check it for "sensor straight".
+
+Above, we configured 2 important details:
+1. We told RocRail to wait 1/4th second after setting a turnout.
+   This covers the communication time between from RocRail to Translate to LayoutWifi and back with sensor feedback.
+   It prevents RocRail from switching too many turnouts too fast.
+2. With sensor feedback, we're making sure RocRail gets the _real_ turnout status as seen by the LayoutWifi arduino and reported by Translate.
+
+[end]
 
