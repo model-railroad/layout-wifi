@@ -10,7 +10,7 @@ import (
 func TestLwServ_New(t *testing.T) {
     assert := assert.New(t)
     s := NewLwServ()
-    
+
     assert.NotNil(s)
 }
 
@@ -50,7 +50,7 @@ func TestLwServ_PollSensors(t *testing.T) {
     assert := assert.New(t)
     m := NewModel()
     s := NewLwServ()
-    
+
     assert.Equal("@S010000\n@S020000\n@S030000\n@S040000\n", s.PollSensors(m))
 
     s.sensors_chan <- LwSensor{29,  true}

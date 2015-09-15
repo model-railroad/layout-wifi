@@ -1,4 +1,4 @@
-package translate 
+package translate
 
 /*
     Simulates the LayoutWifi server running on a DigiX.
@@ -29,7 +29,7 @@ const LW_RELAY_N        =  2 * LW_TURNOUT_N
 const LW_SENSORS_PER_AIU = SENSORS_PER_AIU
 
 const LW_SENSOR_PIN_1   = 22
-const LW_AIU_N          =  2
+const LW_AIU_N          =  4
 const LW_SENSOR_N       = LW_AIU_N * LW_SENSORS_PER_AIU
 
 const LW_TURNOUT_NORMAL    = 'N'
@@ -80,7 +80,7 @@ func NewLwServ() *LwServ {
     lw.reader_chan  = make(chan string, 32)
     lw.writer_chan  = make(chan string, 32)
     lw.writers      = make(map[int]chan string)
-    
+
     for i := 0; i < LW_AIU_N; i++ {
         lw._last[i] = uint16(0xFFFF)
     }
@@ -121,11 +121,11 @@ func LwServer(m *Model) chan LwSensor {
     if err != nil {
         panic(err)
     }
-    
+
     serv := NewLwServ()
 
     go serv.ChanHandler(m)
-    
+
     go func(listener net.Listener) {
         defer listener.Close()
 
@@ -134,7 +134,7 @@ func LwServer(m *Model) chan LwSensor {
             if err != nil {
                 panic(err)
             }
-            
+
             go func(conn net.Conn) {
                 id, c := serv.AllocWriterChan()
                 defer serv.ReleaseWriterChan(id)
@@ -142,7 +142,7 @@ func LwServer(m *Model) chan LwSensor {
             }(conn)
         }
     }(listener)
-    
+
     return serv.sensors_chan
 }
 
@@ -213,7 +213,7 @@ func (s *LwServ) HandleConn(conn net.Conn, m *Model, id int, writer chan string)
             }
         }
     }
-    
+
     fmt.Println("[LW-SERV] Connection closed")
 }
 
@@ -225,7 +225,7 @@ func (s *LwServ) HandleLine(line string) string {
         // Reply: @IT<00>S<00>\n
         return fmt.Sprintf("@IT%02dS%02d\n", LW_TURNOUT_N, LW_AIU_N);
     }
-    
+
     if len(line) == 5 && strings.HasPrefix(line, "@T") {
         // Turnout command: @T<00><N|R>\n
         buf := line[2:5]
@@ -235,7 +235,7 @@ func (s *LwServ) HandleLine(line string) string {
                 turnout > 0 && turnout <= LW_TURNOUT_N) {
             fmt.Printf("[LW-SERV] Accepted Turnout Cmd %d = %c\n", turnout, direction);
             turnout -= 1 // cmd index is 1-based but array & relays are 0-based
-            
+
             aiu := turnout / LW_SENSORS_PER_AIU
             turnout = turnout % LW_SENSORS_PER_AIU
             state := (s._sensors[aiu] >> turnout) & 1
@@ -243,9 +243,9 @@ func (s *LwServ) HandleLine(line string) string {
             if direction == LW_TURNOUT_REVERSE {
                 desired = 1
             }
-            
+
             if state != desired {
-                if direction == LW_TURNOUT_NORMAL {                
+                if direction == LW_TURNOUT_NORMAL {
                     fmt.Printf("[LW-SERV] Simulate trigger pin %d\n", LW_RELAY_NORMAL(turnout))
                     s._sensors[aiu] = LW_CLEAR_BIT(s._sensors[aiu], turnout)
                 } else {
@@ -259,14 +259,14 @@ func (s *LwServ) HandleLine(line string) string {
             fmt.Printf("[LW-SERV] Rejected Turnout Cmd '%s'\n", line);
         }
     }
-    
+
     fmt.Printf("[LW-SERV] Unknown Cmd: '%s'\n", line)
 
     return ""
 }
 
 func (lw *LwServ) PollSensors(m *Model) (reply string) {
-    
+
     loopRead: for !m.IsQuitting() {
         select {
         case s := <- lw.sensors_chan:
@@ -290,13 +290,13 @@ func (lw *LwServ) PollSensors(m *Model) (reply string) {
         }
     }
 
-    for aiu := 1; aiu <= LW_AIU_N; aiu++ {    
+    for aiu := 1; aiu <= LW_AIU_N; aiu++ {
         s := lw._sensors[aiu - 1]
         if s != lw._last[aiu - 1] {
             lw._last[aiu - 1] = s
             reply += fmt.Sprintf("@S%02d%04x\n", aiu, s)
         }
-    }    
+    }
 
     return reply
 }

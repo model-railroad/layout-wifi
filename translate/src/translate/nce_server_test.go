@@ -14,8 +14,8 @@ import (
 
 type MockConn struct {
     _read   []byte
-    _write  []byte 
-    _closed bool 
+    _write  []byte
+    _closed bool
 }
 
 func newMockConn(_read []byte) *MockConn {
@@ -42,8 +42,8 @@ func (c *MockConn) Read(b []byte) (n int, err error) {
         c._read = c._read[n:]
         return n, nil
 
-    } else {    
-        return n, &net.OpError{"EOF", "tcp", nil, io.EOF}
+    } else {
+        return n, &net.OpError{"EOF", "tcp", nil, nil, io.EOF}
     }
 }
 
@@ -85,15 +85,15 @@ func TestMockConn_Read(t *testing.T) {
 
     buf2 := make([]byte, 2)
     buf3 := make([]byte, 3)
-    
+
     n, err := c.Read(buf2)
     assert.Equal(2, n)
     assert.Nil(err)
-    
+
     n, err = c.Read(buf3)
     assert.Equal(3, n)
     assert.Nil(err)
-    
+
     n, err = c.Read(buf2)
     assert.Equal(0, n)
     assert.NotNil(t, err)
@@ -134,8 +134,8 @@ func TestNceServ_HandleConn_GetSensors(t *testing.T) {
     m := NewModel()
     m.SetSensors(2, 0x1234)
 
-    c := newMockConn( []byte{ NCE_GET_AIU_SENSORS, 1,  
-                              NCE_GET_AIU_SENSORS, 2,  
+    c := newMockConn( []byte{ NCE_GET_AIU_SENSORS, 1,
+                              NCE_GET_AIU_SENSORS, 2,
                               NCE_GET_AIU_SENSORS, 2 } )
     NceServ_HandleConn(m, c)
     assert.Equal(t, []byte{ 0x00, 0x00, 0x00, 0x00,
@@ -159,7 +159,7 @@ func TestNceServ_HandleConn_TriggerTurnout(t *testing.T) {
     op, ok = m.GetTurnoutOp(time.Millisecond)
     assert.Equal(true, ok)
     assert.Equal(TurnoutOp{0x08, false}, *op)
-    
+
     op, ok = m.GetTurnoutOp(time.Millisecond)
     assert.Equal(false, ok)
     assert.Nil(op)
@@ -180,18 +180,18 @@ func TestNceServ_HandleConn_ReadTurnouts(t *testing.T) {
 
     c := newMockConn( []byte{ NCE_READ_TURNOUTS, 0x01, 0x23 } )
     NceServ_HandleConn(m, c)
-    assert.Equal([]byte{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, }, 
+    assert.Equal([]byte{ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, },
                  c._write)
 
     m.SetTurnoutState(1, true)
     m.SetTurnoutState(2, false)
     m.SetTurnoutState(5, true)
     m.SetTurnoutState(6, false)
-                 
+
     c.reset( []byte{ NCE_READ_TURNOUTS, 0x01, 0x23 } )
     NceServ_HandleConn(m, c)
-    assert.Equal([]byte{ 0x22, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
-                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, }, 
+    assert.Equal([]byte{ 0x22, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+                         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, },
                  c._write)
 }
