@@ -21,10 +21,10 @@ func NceServer(m *Model) {
     if err != nil {
         panic(err)
     }
-    
+
     go func(listener net.Listener) {
         defer listener.Close()
-        
+
         for !m.IsQuitting() {
             conn, err := listener.Accept()
             if err != nil {
@@ -50,8 +50,8 @@ func NceServ_HandleConn(m *Model, conn net.Conn) {
             cmd := buf[0]
 
             // TODO limit with if-verbose flag
-            fmt.Printf("[NCE] Command: 0x%02x\n", cmd)
-            
+            if *VERBOSE { fmt.Printf("[NCE] Command: 0x%02x\n", cmd) }
+
             switch cmd {
             case NCE_GET_VERSION:
                 // Op: Get version.
@@ -62,8 +62,8 @@ func NceServ_HandleConn(m *Model, conn net.Conn) {
                 buf[1] = 3
                 buf[2] = 8
                 n, err = conn.Write(buf[0:3])
-            
-            case NCE_GET_AIU_SENSORS:            
+
+            case NCE_GET_AIU_SENSORS:
                 // Op: AIU polling
                 // Args: 1 byte (AIU number)
                 // Reply: returns 4 bytes (sensor BE, mask BE, 14 bits max)
@@ -81,17 +81,18 @@ func NceServ_HandleConn(m *Model, conn net.Conn) {
                     buf[3] = byte( mask       & 0x0FF)
 
                     // TODO limit with if-verbose flag
-                    fmt.Printf("[NCE] > Poll AIU[%d] = %04x ^ %04x\n", aiu, s, mask)
-                    
+                    if *VERBOSE { fmt.Printf("[NCE] > Poll AIU[%d] = %04x ^ %04x\n", aiu, s, mask) }
+
                     n, err = conn.Write(buf[0:4])
                 } else {
                     fmt.Printf("[NCE] > Invalid Poll AIU [%d], n=%d, err=%v\n", aiu, n, err)
                 }
-                
+
             case NCE_TRIGGER_ACC:
                 // Op: Trigger accessories (i.e. turnouts)
                 // Args: 4 bytes (2 for address big endian, 1 op: 3=normal/on, 4=reverse/off, 1 byte=0)
                 // Reply: 1 byte "!"
+                // Note: JMRI uses closed (aka normal) vs thrown (aka reverse)
                 n, err := conn.Read(buf[0:4])
                 addr := (int(buf[0]) << 8) + int(buf[1])
                 op   := int(buf[2])
@@ -99,13 +100,13 @@ func NceServ_HandleConn(m *Model, conn net.Conn) {
                     fmt.Printf("[NCE] > Trigger Acc [%04x], op=%d\n", addr, op)
 
                     m.SendTurnoutOp( &TurnoutOp{addr, op == 3} )
-                    
+
                     buf[0] = '!'
                     n, err = conn.Write(buf[0:1])
                 } else {
                     fmt.Printf("[NCE] > Invalid Trigger Acc [%04x], op=%d, n=%d, err=%v\n", addr, op, n, err)
                 }
-                
+
             case NCE_READ_RAM:
                 // Op: Read one byte from RAM
                 // Args: 2 bytes (address, big endian)
@@ -138,13 +139,13 @@ func NceServ_HandleConn(m *Model, conn net.Conn) {
                     for i := 4; i < 16; i++ {
                         buf[i] = 0
                     }
-                    
+
                     fmt.Printf("[NCE] > Read Turnouts [%04x] %v\n", addr, buf)
                     n, err = conn.Write(buf[0:16])
                 } else {
                     fmt.Printf("[NCE] > Invalid Read Turnouts [%04x], n=%d, err=%v\n", addr, n, err)
                 }
-                
+
             default:
                 fmt.Printf("[NCE] > Ignored command 0x%02x\n", cmd)
             }

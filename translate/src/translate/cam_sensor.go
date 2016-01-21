@@ -167,7 +167,7 @@ func CamSensorDebugHandler(w http.ResponseWriter, req *http.Request) {
     content += fmt.Sprintf("<li>Status Server: %s</li>\n", _getPort(*CAM_SERV))
     content += "</ul></td><td><ul>\n"
     content += fmt.Sprintf("<li>LayoutWifi Arduino: %s</li>\n", _getPort(*LW_CLIENT_PORT))
-    if LW_SERV {
+    if *LW_SERV {
         content += fmt.Sprintf("<li>LayoutWifi Simulator: %s</li>\n", _getPort(*LW_SERV_PORT))
     } else {
         content += "<li>LayoutWifi Simulator: stopped</li>\n"
