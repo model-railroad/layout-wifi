@@ -39,9 +39,9 @@ var CAM_SENSORS = flag.String("cam-sensors",
 
 var CAM_OFFSETS = flag.String("cam-offsets", "0:0,0 1:0,0", "Camera sensor offsets")
 
-var CAM_TIMER_SENSOR = flag.Int("cam-timer-sensor",
-    33,
-    "Sensor to use as loop timer. 0 to disable.")
+var CAM_TIMER_SENSORS = flag.String("cam-timer-sensors",
+    "33,42,33-42",
+    "Sensors to use as loop or start-stop timers. Empty to disable.")
 
 
 // Typical URLs:
@@ -52,14 +52,19 @@ var CAM_TIMER_SENSOR = flag.Int("cam-timer-sensor",
 //-----
 
 var CAMERAS []*Camera
-var CAM_TIMER *CamTimer
+var CAM_TIMERS []*CamTimer
+
+type CamTimerSensor struct {
+    sensor       int
+    trigger_time time.Time
+    ignore_time  time.Time
+}
 
 type CamTimer struct {
-    sensor      int
-    start_time  time.Time
-    ignore_time time.Time
-    loop_times  []time.Duration
-    loop_mutex  sync.Mutex
+    start       *CamTimerSensor
+    stop        *CamTimerSensor
+    durations   []time.Duration
+    mutex       sync.Mutex
 }
 
 type CamSensor struct {
@@ -73,7 +78,7 @@ type CamSensor struct {
     min     int
     max     int
     threshold int
-    timer   *CamTimer
+    timers  []*CamTimer
 }
 
 type Camera struct {
@@ -94,13 +99,6 @@ func NewCamera(index int, url_str string) *Camera {
     cam.index = index
     cam.url = u
     return cam
-}
-
-func NewCamTimer(sensor *CamSensor) *CamTimer {
-    timer := &CamTimer{}
-    timer.sensor = sensor.sensor
-    sensor.timer = timer
-    return timer
 }
 
 
@@ -157,7 +155,6 @@ func (ci *CamImage) GrayAt(x, y int) color.Color {
 func CamSensorDebugServer() {
     http.HandleFunc("/", CamSensorDebugHandler)
     http.HandleFunc("/reload", CamSensorReloadHandler)
-    http.HandleFunc("/timer", CamSensorTimerHandler)
 
     go func() {
         if err := http.ListenAndServe(*CAM_SERV, nil /*handler*/); err != nil {
@@ -182,7 +179,7 @@ func CamSensorDebugHandler(w http.ResponseWriter, req *http.Request) {
         </style>
         </head>
         <body><h2>Translate Server</h2>
-        <table width="100%"><tr"><td><ul>`
+        <table width="100%"><tr><td><ul>`
 
     content += fmt.Sprintf("<li>SRCP Server: %s</li>\n", _getPort(*SRCP_PORT))
     content += fmt.Sprintf("<li>NCE Server: %s</li>\n", _getPort(*NCE_PORT))
@@ -202,6 +199,7 @@ func CamSensorDebugHandler(w http.ResponseWriter, req *http.Request) {
     content += "<table><tr>\n"
 
     cams := ""
+    timers := ""
     for _, cam := range CAMERAS {
         if cams != "" {
             cams += ", "
@@ -220,7 +218,17 @@ func CamSensorDebugHandler(w http.ResponseWriter, req *http.Request) {
         "@@", strconv.Itoa(cam.index), -1)
     }
     content += "</tr></table>\n"
-    content += "<p/> <a id='timer' href='#timer'>Timer:</a> <br/> <div id='tim1'/>"
+    content += "<p/> <a id='timer' href='#timer'>Timers</a> | <a id='reset_timer' href='#'>Reset</a> <br/>"
+    content += "<table width='100%'><tr>"
+    for index, _ := range CAM_TIMERS {
+        index += 1
+        content += fmt.Sprintf("<td><div id='timer%d'></td>", index)
+        if timers != "" {
+            timers += ", "
+        }
+        timers += fmt.Sprintf("{ index: %d }", index)
+    }
+    content += "</tr></table><p/>\n"
 
     content += `
 <script src="//ajax.googleapis.com/ajax/libs/jquery/1.11.1/jquery.min.js"></script>
@@ -259,13 +267,27 @@ for (c = 0; c < cams.length; c++) {
     $("#refresh" + cam.index).click(cam.img_refresher);
 }
 
-timer_xh = new XMLHttpRequest();
-timer_xh.onreadystatechange = function() {
-    if (timer_xh.readyState == 4 && timer_xh.status == 200) {
-        var div = $("#tim1");
-        div.html(timer_xh.responseText);
-    }
-};
+$("#reset_timer").click(function() {
+    $.ajax({
+        type: "POST",
+        url: "/timer/reset"
+    });
+    return false;
+});
+
+timers = [` + timers + `];
+for (t = 0; t < timers.length; t++) {
+    var timer = timers[t];
+    timer.xh = new XMLHttpRequest();
+    timer.xh.onreadystatechange = function(timer) {
+        return function() {
+            if (timer.xh.readyState == 4 && timer.xh.status == 200) {
+                var div = $("#timer" + timer.index);
+                div.html(timer.xh.responseText);
+            }
+        }
+    }(timer);
+}
 
 setInterval(function() {
     for (c = 0; c < cams.length; c++) {
@@ -274,8 +296,11 @@ setInterval(function() {
         cam.xh.open("GET", url, true);
         cam.xh.send();
     }
-    timer_xh.open("GET", "/timer", true);
-    timer_xh.send();
+    for (t = 0; t < timers.length; t++) {
+        var timer = timers[t];
+        timer.xh.open("GET", "/timer/" + timer.index, true);
+        timer.xh.send();
+    }
 }, 2000);
 </script>
 
@@ -303,21 +328,37 @@ func CamSensorLastImageHandler(cam *Camera, w http.ResponseWriter, req *http.Req
 
 //-----
 
-func CamSensorTimerHandler(w http.ResponseWriter, req *http.Request) {
-    content := "<html>"
-    t := CAM_TIMER
-    if t != nil {
-        t.loop_mutex.Lock()
-        defer t.loop_mutex.Unlock()
-        for i, dur := range t.loop_times {
-            content += fmt.Sprintf("%d: %v <br/>\n", i, dur)
-        }
+func CamSensorTimerHandler(timer *CamTimer, w http.ResponseWriter, req *http.Request) {
+    content := fmt.Sprintf("<html>Timer: %d", timer.start.sensor)
+    if timer.stop != nil {
+        content += fmt.Sprintf("-%d", timer.stop.sensor)
+    }
+    content += "<br/><hr/><br/>"
+
+    timer.mutex.Lock()
+    defer timer.mutex.Unlock()
+    for i, dur := range timer.durations {
+        content += fmt.Sprintf("%d: %v <br/>\n", i, dur)
     }
     content += "</html>"
 
     w.Header().Set("Content-Type", "text/plain; charset=utf-8")
     w.WriteHeader(http.StatusOK)
     io.WriteString(w, content)
+}
+
+func CamSensorTimerResetHandler(w http.ResponseWriter, req *http.Request) {
+    for _, t := range CAM_TIMERS {
+        go func(timer *CamTimer) {
+            timer.mutex.Lock()
+            defer timer.mutex.Unlock()
+            timer.durations = nil  // clear the slice. Range and append work fine with nil.
+        }(t)
+    }
+
+    w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+    w.WriteHeader(http.StatusOK)
+    io.WriteString(w, "OK")
 }
 
 //-----
@@ -378,16 +419,70 @@ func CamSensorClient(m *Model) {
         }(cam)
     }
 
-    if *CAM_TIMER_SENSOR > 0 {
-        next_cam: for _, cam := range CAMERAS {
-            for _, sensor := range cam.sensors {
-                if sensor.sensor == *CAM_TIMER_SENSOR {
-                    CAM_TIMER = NewCamTimer(sensor)
-                    break next_cam
-                }
+    if *CAM_TIMER_SENSORS != "" {
+        http.HandleFunc("/timer/reset", CamSensorTimerResetHandler)
+
+        for _, t := range strings.Split(*CAM_TIMER_SENSORS, ",") {
+            timer := NewCamTimer(t)
+            if timer != nil {
+                CAM_TIMERS = append(CAM_TIMERS, timer)
+                index := len(CAM_TIMERS)
+                http.HandleFunc(fmt.Sprintf("/timer/%d", index),
+                    func(w http.ResponseWriter, r *http.Request) {
+                        CamSensorTimerHandler(timer, w, r)
+                    })
             }
         }
     }
+}
+
+func NewCamTimer(sensor_info string) *CamTimer {
+    var sensor1, sensor2 int
+    var err error
+
+    if strings.Contains(sensor_info, "-") {
+        // Start-stop dual sensor
+        segments := strings.Split(sensor_info, "-")
+        sensor1, err = strconv.Atoi(segments[0])
+        if err == nil {
+           sensor2, err = strconv.Atoi(segments[1])
+        }
+    } else {
+        // Single sensor
+        sensor1, err = strconv.Atoi(sensor_info)
+        sensor2 = 0
+    }
+
+    if err != nil {
+        fmt.Printf("[CAM] Unexpected timer sensor definition: %v\n", sensor_info, err)
+        return nil
+    }
+
+    timer := &CamTimer{}
+    timer.start = &CamTimerSensor{}
+    timer.start.sensor = sensor1
+    cs1 := GetCamSensor(sensor1)
+    cs1.timers = append(cs1.timers, timer)
+
+    if sensor2 > 0 {
+        timer.stop = &CamTimerSensor{}
+        timer.stop.sensor = sensor2
+        cs2 := GetCamSensor(sensor2)
+        cs2.timers = append(cs2.timers, timer)
+    }
+
+    return timer
+}
+
+func GetCamSensor(sensor_index int) *CamSensor {
+    for _, cam := range CAMERAS {
+        for _, sensor := range cam.sensors {
+            if sensor.sensor == sensor_index {
+                return sensor
+            }
+        }
+    }
+    return nil
 }
 
 func (cam *Camera) CamClient(stream io.ReadCloser, m *Model) {
@@ -537,7 +632,8 @@ func (cam *Camera) SetupSensors(config, offsets string) {
     }
     fmt.Printf("[CAM %d: %s] Setup sensors with offset %v\n", cam.index, cam.url.Host, offset)
 
-    re = regexp.MustCompile(fmt.Sprintf("([%d]),([0-9]+):([0-9]+),([0-9]+),([0-9]+),([0-9]+)", cam.index))
+    re = regexp.MustCompile(
+        fmt.Sprintf("([%d]),([0-9]+):([0-9]+),([0-9]+),([0-9]+),([0-9]+)", cam.index))
 
     match := re.FindAllStringSubmatch(config, -1 /*all*/)
     if cam.sensors == nil {
@@ -598,7 +694,8 @@ func (cam *Camera) DebugHtml() string {
     overview := "|"
 
     for index, s := range cam.sensors {
-        content += fmt.Sprintf("[%2d,%3d] [%02X | %02X | %02X] ", index, s.sensor, s.min, s.threshold, s.max)
+        content += fmt.Sprintf("[%2d,%3d] [%02X | %02X | %02X] ",
+            index, s.sensor, s.min, s.threshold, s.max)
         for _, v := range s.values {
             var color string
             if v > s.threshold {
@@ -682,12 +779,17 @@ func (cam *Camera) UpdateSensors(img *CamImage, m *Model) {
         old := s.empty
         s.empty = is_empty
         if old != is_empty || s.init {
-            if s.timer != nil {
-                s.timer.SensorTriggered(is_empty)
-            }
-            fmt.Printf("Cam Sensor changed: %v => %v [%d | %d | %d] %v\n", s.sensor, !is_empty, num_start, center, num_end, v)
             m.SetSensor(s.sensor, !is_empty)
             s.init = false
+
+            if !is_empty {
+                for _, t := range s.timers {
+                    t.TimerTriggered(s.sensor)
+                }
+            }
+
+            fmt.Printf("Cam Sensor changed: %v => %v [%d | %d | %d] %v\n",
+                s.sensor, !is_empty, num_start, center, num_end, v)
         }
     }
 }
@@ -706,22 +808,53 @@ func _abs(a, b int) int {
 // - if start_time is not zero:
 //   - if time > ignore_time, this is the end of the loop + start new one.
 //   - if time <= ignore_time, just ignore it as a dummy event.
-func (t *CamTimer) SensorTriggered(is_empty bool) {
-    if is_empty {
-        return
-    }
+func (t *CamTimer) TimerTriggered(sensor int) {
     now := time.Now()
-    if !t.ignore_time.IsZero() && now.After(t.ignore_time) {
-        // A loop was completed
-        loop_d := now.Sub(t.start_time)
-        t.loop_mutex.Lock()
-        defer t.loop_mutex.Unlock()
-        t.loop_times = append(t.loop_times, loop_d)
-        fmt.Printf("Cam Timer [%v]: Loop %d = %v\n", t.sensor, len(t.loop_times), loop_d)
+
+    if t.stop == nil {
+        // Single loop timer
+        if t.start.sensor == sensor {
+            duration := t.start.SensorTriggered(now)
+            if duration > 0 {
+                t.mutex.Lock()
+                defer t.mutex.Unlock()
+                t.durations = append(t.durations, duration)
+                fmt.Printf("Cam Timer [%v]: Loop %d = %v\n",
+                    t.start.sensor, len(t.durations), duration)
+            }
+        }
+    } else {
+        // Start-stop dual timer
+        if t.start.sensor == sensor {
+            if t.start.SensorTriggered(now) > 0 {
+                t.stop.trigger_time = t.start.trigger_time
+            }
+        } else if t.stop.sensor == sensor && t.stop.trigger_time == t.start.trigger_time {
+            if t.stop.SensorTriggered(now) > 0 {
+                duration := t.stop.trigger_time.Sub(t.start.trigger_time)
+                if duration > 0 {
+                    t.mutex.Lock()
+                    defer t.mutex.Unlock()
+                    t.durations = append(t.durations, duration)
+                    fmt.Printf("Cam Timer [%v-%v]: %d = %v\n",
+                        t.start.sensor, t.stop.sensor, len(t.durations), duration)
+                }
+            }
+        }
     }
-    t.start_time = now
-    t.ignore_time = now.Add(CAM_TIMER_IGNORE)
 }
+
+func (s *CamTimerSensor) SensorTriggered(now time.Time) (duration time.Duration) {
+    if !s.ignore_time.IsZero() && now.Before(s.ignore_time) {
+        return duration
+    }
+    duration = now.Sub(s.trigger_time)
+    s.trigger_time = now
+    s.ignore_time = now.Add(CAM_TIMER_IGNORE)
+    return duration
+}
+
+
 
 
 
