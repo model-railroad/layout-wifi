@@ -18,6 +18,7 @@ import (
     "strconv"
     "sync"
     "time"
+    "net"
 )
 
 const CAM_N_POINTS = 12
@@ -27,6 +28,8 @@ const CAM_MIN_MAX_DELTA = 50
 const CAM_TIMER_IGNORE = time.Duration(10 * time.Second)
 
 var CAM_SERV = flag.String("cam-server", ":8088", "Camera debug server host:port")
+
+var SENSORS_SERV = flag.String("sensor-server", ":8090", "Sensors server host:port")
 
 var CAM_HOSTS = flag.String("cam-urls",
     "camera1.local:80/path.cgi?user=foo&pwd=blah," +
@@ -53,6 +56,7 @@ var CAM_TIMER_SENSORS = flag.String("cam-timer-sensors",
 
 var CAMERAS []*Camera
 var CAM_TIMERS []*CamTimer
+var CAM_SENSORS_CHANNELS CamSensorsChannels
 
 type CamTimerSensor struct {
     sensor       int
@@ -79,6 +83,11 @@ type CamSensor struct {
     max     int
     threshold int
     timers  []*CamTimer
+}
+
+type CamSensorsChannels struct {
+    mutex sync.Mutex
+    channels map[chan int]bool
 }
 
 type Camera struct {
@@ -434,6 +443,8 @@ func CamSensorClient(m *Model) {
             }
         }
     }
+
+   runSensorsServer(m)
 }
 
 func NewCamTimer(sensor_info string) *CamTimer {
@@ -782,6 +793,8 @@ func (cam *Camera) UpdateSensors(img *CamImage, m *Model) {
             m.SetSensor(s.sensor, !is_empty)
             s.init = false
 
+            dispatchToSensorsServers(s.sensor)
+
             if !is_empty {
                 for _, t := range s.timers {
                     t.TimerTriggered(s.sensor)
@@ -856,5 +869,72 @@ func (s *CamTimerSensor) SensorTriggered(now time.Time) (duration time.Duration)
 
 
 
+func runSensorsServer(m *Model) {
+    fmt.Printf("Start Sensors server on %s\n", *SENSORS_SERV)
 
+    listener, err := net.Listen("tcp", *SENSORS_SERV)
+    if err != nil {
+        panic(err)
+    }
 
+    go func() {
+        for !m.IsQuitting() {
+            conn, err := listener.Accept()
+            if err != nil {
+                panic(err)
+            }
+
+            go sensorsServerHandleConn(m, conn)
+        }
+    }()
+}
+
+func sensorsServerHandleConn(m *Model, conn net.Conn) {
+    fmt.Printf("[Sensors server] Connection Open\n")
+
+    c := CAM_SENSORS_CHANNELS.newChannel()
+
+    defer func() {
+        conn.Close()
+        CAM_SENSORS_CHANNELS.delChannel(c)
+        fmt.Printf("[Sensors server] Connection Closed\n")
+    }()
+
+    var err error
+    for !m.IsQuitting() && err == nil {
+        v := <-c
+        _, err = conn.Write( []byte(strconv.Itoa(v) + "\n") )
+    }
+}
+
+func (s *CamSensorsChannels) newChannel() chan int {
+    s.mutex.Lock()
+    defer s.mutex.Unlock()
+    if s.channels == nil {
+        s.channels = make(map[chan int]bool)
+    }
+    c := make(chan int, 100)
+    s.channels[c] = true
+    return c
+}
+
+func (s *CamSensorsChannels) delChannel(c chan int) {
+    s.mutex.Lock()
+    defer s.mutex.Unlock()
+    delete(s.channels, c)
+}
+
+func dispatchToSensorsServers(sensor int) {
+    CAM_SENSORS_CHANNELS.mutex.Lock()
+    defer CAM_SENSORS_CHANNELS.mutex.Unlock()
+    if CAM_SENSORS_CHANNELS.channels == nil {
+        return
+    }
+    for c, ok := range CAM_SENSORS_CHANNELS.channels {
+        if ok {
+            go func(c chan int, s int) {
+                c <- s
+            }(c, sensor)
+        }
+    }
+}

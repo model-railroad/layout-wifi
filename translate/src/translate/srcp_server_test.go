@@ -136,8 +136,8 @@ func TestSrcpSession_HandleLine_Go_Command(t *testing.T) {
 func TestSrcpSession_HandleLine_Go_Info(t *testing.T) {
     assert := assert.New(t)
     m, c, _, s := _test_srcp_init(SRCP_MODE_HANDSHAKE, nil)
-    m.SetSensor(MAX_SENSORS, true)
     m.SetSensor(MAX_SENSORS - 1, true)
+    m.SetSensor(MAX_SENSORS - 2, true)
     s.HandleLine(m, "SET CONNECTIONMODE SRCP INFO")
     s.HandleLine(m, "GO")
     assert.Equal(
@@ -150,8 +150,8 @@ func TestSrcpSession_HandleLine_Go_Info(t *testing.T) {
                "18 100 INFO 7 DESCRIPTION GA DESCRIPTION\n" +
                "19 100 INFO 8 DESCRIPTION FB DESCRIPTION\n" +
                // sensors set to zero are not transmitted
-               "20 100 INFO 8 FB 55 1\n" +
-               "21 100 INFO 8 FB 56 1\n"), 
+               "20 100 INFO 8 FB 60 1\n" +
+               "21 100 INFO 8 FB 61 1\n"),
         c._write)    
 }
 
@@ -189,32 +189,38 @@ func TestSrcpSession_SendSensorUpdate(t *testing.T) {
 
     m.SetSensor(1, true)
     m.SetSensor(2, true)
+    m.SetSensor(MAX_SENSORS - 2, true)
     m.SetSensor(MAX_SENSORS - 1, true)
-    m.SetSensor(MAX_SENSORS, true)
 
     s.SendSensorUpdate(m)
     assert.Equal(
+        "12 100 INFO 8 FB 1 1\n" +
+        "13 100 INFO 8 FB 2 1\n" +
+        "14 100 INFO 8 FB 60 1\n" +
+        "15 100 INFO 8 FB 61 1\n",
+        string(c._write))
+    assert.Equal(
         []byte("12 100 INFO 8 FB 1 1\n" +
                "13 100 INFO 8 FB 2 1\n" +
-               "14 100 INFO 8 FB 55 1\n" +
-               "15 100 INFO 8 FB 56 1\n"), 
+               "14 100 INFO 8 FB 60 1\n" +
+               "15 100 INFO 8 FB 61 1\n"),
         c._write)
 
     c.reset(nil)
     m.SetSensor(2, false)
-    m.SetSensor(MAX_SENSORS - 1, false)
+    m.SetSensor(MAX_SENSORS - 2, false)
     s.SendSensorUpdate(m)
     assert.Equal(
         []byte("16 100 INFO 8 FB 2 0\n" +
-               "17 100 INFO 8 FB 55 0\n"), 
+               "17 100 INFO 8 FB 60 0\n"),
         c._write)
 
     c.reset(nil)
     m.SetSensor(1, false)
-    m.SetSensor(MAX_SENSORS, false)
+    m.SetSensor(MAX_SENSORS - 1, false)
     s.SendSensorUpdate(m)
     assert.Equal(
         []byte("18 100 INFO 8 FB 1 0\n" +
-               "19 100 INFO 8 FB 56 0\n"), 
+               "19 100 INFO 8 FB 61 0\n"),
         c._write)
 }

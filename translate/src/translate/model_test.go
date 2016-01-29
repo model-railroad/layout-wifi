@@ -15,6 +15,31 @@ func TestQuitting(t *testing.T) {
     assert.Equal(t, true, m.IsQuitting())
 }
 
+func TestConvertSensorToAiuBit(t *testing.T) {
+    assert := assert.New(t)
+    m := NewModel()
+
+    aiu, bit := m.ConvertSensorToAiuBit(0+0)
+    assert.Equal(1, aiu)
+    assert.Equal(uint(0), bit)
+
+    aiu, bit = m.ConvertSensorToAiuBit(0+13)
+    assert.Equal(1, aiu)
+    assert.Equal(uint(13), bit)
+
+    aiu, bit = m.ConvertSensorToAiuBit(16+1)
+    assert.Equal(2, aiu)
+    assert.Equal(uint(1), bit)
+
+    aiu, bit = m.ConvertSensorToAiuBit(32+12)
+    assert.Equal(3, aiu)
+    assert.Equal(uint(12), bit)
+
+    aiu, bit = m.ConvertSensorToAiuBit(48+0)
+    assert.Equal(4, aiu)
+    assert.Equal(uint(0), bit)
+}
+
 func TestSensors(t *testing.T) {
     assert := assert.New(t)
     m := NewModel()
@@ -28,17 +53,25 @@ func TestSensors(t *testing.T) {
         m.SetSensors(i, uint16(0))
         assert.Equal(uint16(0), m.GetSensors(i))
     }
-    
-    for i := 1; i <= MAX_SENSORS; i++ {
-        assert.Equal(false, m.GetSensor(i))
 
-        m.SetSensor(i, true)
-        assert.Equal(true, m.GetSensor(i))
+    for i := 1; i <= MAX_AIUS; i++ {
+        base := (i - 1) * 16
+        for j := base; j < base + SENSORS_PER_AIU; j++ {
+
+            assert.Equal(false, m.GetSensor(j))
+
+            m.SetSensor(j, true)
+            assert.Equal(true, m.GetSensor(j))
+        }
     }
 
     for i := 1; i <= MAX_AIUS; i++ {
         assert.Equal(uint16(0x3FFF), m.GetSensors(i))
     }
+
+    m.SetSensor(MAX_SENSORS - 1, false)
+    m.SetSensor(MAX_SENSORS - 2, false)
+    assert.Equal(uint16(0x0FFF), m.GetSensors(MAX_AIUS))
 }
 
 func TestTurnoutOp(t *testing.T) {
