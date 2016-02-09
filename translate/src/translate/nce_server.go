@@ -8,6 +8,8 @@ import (
 
 var NCE_PORT = flag.String("nce-port", ":8080", "NCE server host:port")
 
+var NCE_INVERT_AIUS = flag.Bool("nce-invert-aius", false, "Invert AIU sensor bits for NCE server.")
+
 const NCE_GET_VERSION     = 0xAA
 const NCE_GET_AIU_SENSORS = 0x8A
 const NCE_READ_TURNOUTS   = 0x8F
@@ -43,6 +45,8 @@ func NceServ_HandleConn(m *Model, conn net.Conn) {
     sensors := make([]uint16, MAX_AIUS)
     buf := make([]byte, 16)
 
+    invert := *NCE_INVERT_AIUS
+
     loopRead: for !m.IsQuitting() {
         n, err := conn.Read(buf[0:1])
 
@@ -71,6 +75,9 @@ func NceServ_HandleConn(m *Model, conn net.Conn) {
                 aiu := int(buf[0])
                 if n == 1 && err == nil && aiu >= 1 && aiu <= MAX_AIUS {
                     s := m.GetSensors(aiu)
+                    if invert {
+                        s = s ^ 0x03FFF
+                    }
                     buf[0] = byte((s >> 8) & 0x0FF)
                     buf[1] = byte( s       & 0x0FF)
 
