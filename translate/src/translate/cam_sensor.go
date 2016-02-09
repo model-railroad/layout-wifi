@@ -22,7 +22,8 @@ import (
 )
 
 const CAM_N_POINTS = 12
-const CAM_THRESHOLD = 100
+const CAM_BASE_MAX = 100
+const CAM_THRESHOLD_FACTOR = 0.70
 const CAM_N_ACTIVE = 3
 const CAM_MIN_MAX_DELTA = 50
 const CAM_TIMER_IGNORE = time.Duration(10 * time.Second)
@@ -43,7 +44,7 @@ var CAM_SENSORS = flag.String("cam-sensors",
 var CAM_OFFSETS = flag.String("cam-offsets", "0:0,0 1:0,0", "Camera sensor offsets")
 
 var CAM_TIMER_SENSORS = flag.String("cam-timer-sensors",
-    "33,42,33-42",
+    "0,1,0-1",
     "Sensors to use as loop or start-stop timers. Empty to disable.")
 
 
@@ -87,7 +88,7 @@ type CamSensor struct {
 
 type CamSensorsChannels struct {
     mutex sync.Mutex
-    channels map[chan int]bool
+    channels map[chan string]bool
 }
 
 type Camera struct {
@@ -748,10 +749,10 @@ func (cam *Camera) UpdateSensors(img *CamImage, m *Model) {
         const T1 = T-1
         min = (min + T1 * s.min) / T
         max = (max + T1 * s.max) / T
-        if max < CAM_THRESHOLD {
-            max = CAM_THRESHOLD
+        if max < CAM_BASE_MAX {
+            max = CAM_BASE_MAX
         }
-        threshold := (min + 2 * max) / 3
+        threshold := int(float64(min) + CAM_THRESHOLD_FACTOR * float64(max - min))
         s.min = min
         s.max = max
         s.threshold = threshold
@@ -793,7 +794,7 @@ func (cam *Camera) UpdateSensors(img *CamImage, m *Model) {
             m.SetSensor(s.sensor, !is_empty)
             s.init = false
 
-            dispatchToSensorsServers(s.sensor)
+            dispatchToSensorsServers(fmt.Sprintf("S:%d", s.sensor));
 
             if !is_empty {
                 for _, t := range s.timers {
@@ -828,12 +829,14 @@ func (t *CamTimer) TimerTriggered(sensor int) {
         // Single loop timer
         if t.start.sensor == sensor {
             duration := t.start.SensorTriggered(now)
-            if duration > 0 {
+            if duration > 0 && duration.Hours() < 1 {
                 t.mutex.Lock()
                 defer t.mutex.Unlock()
                 t.durations = append(t.durations, duration)
                 fmt.Printf("Cam Timer [%v]: Loop %d = %v\n",
                     t.start.sensor, len(t.durations), duration)
+                dispatchToSensorsServers(
+                    fmt.Sprintf("L/%d:%f", t.start.sensor, duration.Seconds()))
             }
         }
     } else {
@@ -845,12 +848,14 @@ func (t *CamTimer) TimerTriggered(sensor int) {
         } else if t.stop.sensor == sensor && t.stop.trigger_time == t.start.trigger_time {
             if t.stop.SensorTriggered(now) > 0 {
                 duration := t.stop.trigger_time.Sub(t.start.trigger_time)
-                if duration > 0 {
+                if duration > 0 && duration.Hours() < 1 {
                     t.mutex.Lock()
                     defer t.mutex.Unlock()
                     t.durations = append(t.durations, duration)
                     fmt.Printf("Cam Timer [%v-%v]: %d = %v\n",
                         t.start.sensor, t.stop.sensor, len(t.durations), duration)
+                    dispatchToSensorsServers(
+                        fmt.Sprintf("T/%d-%d:%f", t.start.sensor, t.stop.sensor, duration.Seconds()))
                 }
             }
         }
@@ -903,28 +908,28 @@ func sensorsServerHandleConn(m *Model, conn net.Conn) {
     var err error
     for !m.IsQuitting() && err == nil {
         v := <-c
-        _, err = conn.Write( []byte(strconv.Itoa(v) + "\n") )
+        _, err = conn.Write( []byte(v + "\n") )
     }
 }
 
-func (s *CamSensorsChannels) newChannel() chan int {
+func (s *CamSensorsChannels) newChannel() chan string {
     s.mutex.Lock()
     defer s.mutex.Unlock()
     if s.channels == nil {
-        s.channels = make(map[chan int]bool)
+        s.channels = make(map[chan string]bool)
     }
-    c := make(chan int, 100)
+    c := make(chan string, 100)
     s.channels[c] = true
     return c
 }
 
-func (s *CamSensorsChannels) delChannel(c chan int) {
+func (s *CamSensorsChannels) delChannel(c chan string) {
     s.mutex.Lock()
     defer s.mutex.Unlock()
     delete(s.channels, c)
 }
 
-func dispatchToSensorsServers(sensor int) {
+func dispatchToSensorsServers(data string) {
     CAM_SENSORS_CHANNELS.mutex.Lock()
     defer CAM_SENSORS_CHANNELS.mutex.Unlock()
     if CAM_SENSORS_CHANNELS.channels == nil {
@@ -932,9 +937,9 @@ func dispatchToSensorsServers(sensor int) {
     }
     for c, ok := range CAM_SENSORS_CHANNELS.channels {
         if ok {
-            go func(c chan int, s int) {
+            go func(c chan string, s string) {
                 c <- s
-            }(c, sensor)
+            }(c, data)
         }
     }
 }
