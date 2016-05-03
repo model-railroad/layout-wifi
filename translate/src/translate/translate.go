@@ -14,13 +14,13 @@ import (
     "syscall"
 )
 
-var LW_SERV bool
+var VERBOSE = flag.Bool("verbose", false, "Verbose output")
+var LW_SERV = flag.Bool("simulate", false, "Simulate LayoutWifi server")
+var ENABLE_CAM_SERV = flag.Bool("enable-cam-server", true, "Enable camera server")
 var CONFIG_FILE string
 var CONFIG = NewConfig()
 
 func init() {
-    flag.BoolVar(&LW_SERV, "simulate", false, "Simulate LayoutWifi server")
-
     filename := "~/.translaterc"
     if usr, err := user.Current(); err == nil {
         filename = filepath.Join(usr.HomeDir, filename[2:])
@@ -61,12 +61,12 @@ func TerminalLoop(m *Model, sensors_chan chan<- LwSensor) {
         case str == "quit" || str == "q":
             m.SetQuitting()
 
-        case LW_SERV && strings.HasPrefix(str, "on"):
+        case *LW_SERV && strings.HasPrefix(str, "on"):
             fields := strings.Fields(str)
             if index, err :=  strconv.Atoi(fields[1]); err == nil {
                 sensors_chan <- LwSensor { uint(index), true }
             }
-        case LW_SERV && strings.HasPrefix(str, "off"):
+        case *LW_SERV && strings.HasPrefix(str, "off"):
             fields := strings.Fields(str)
             if index, err :=  strconv.Atoi(fields[1]); err == nil {
                 sensors_chan <- LwSensor { uint(index), false }
@@ -88,11 +88,14 @@ func Main() {
     SetupSignal(model)
     NceServer(model)
     SrcpServer(model)
-    CamSensorClient(model)
-    CamSensorDebugServer()
+
+    if (*ENABLE_CAM_SERV) {
+        CamSensorClient(model)
+        CamSensorDebugServer()
+    }
 
     var sensors_chan chan LwSensor
-    if (LW_SERV) {
+    if (*LW_SERV) {
         // Simulate DigiX server
         sensors_chan = LwServer(model)
     }

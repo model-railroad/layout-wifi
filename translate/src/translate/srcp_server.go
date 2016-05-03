@@ -219,7 +219,7 @@ func (s *SrcpSession) HandleLine(m *Model, line string) error {
             s.Reply("100 INFO 8 DESCRIPTION FB DESCRIPTION")
             // give the initial sensors states *if they are not zero*
             // (c.f. SRCP-084.PDF pages 33-34: don't transmit default state.)
-            for t := 1; t <= MAX_SENSORS; t++ {               
+            for t := 0; t < MAX_SENSORS; t++ {
                 if m.GetSensor(t) {
                     s.Reply(fmt.Sprintf("100 INFO 8 FB %d 1", t))
                 }
@@ -255,7 +255,7 @@ func (s *SrcpSession) SendSensorUpdate(m *Model) {
         previous := s.sensors[aiu - 1]
         if state != previous {
             s.sensors[aiu - 1] = state
-            for i := 1; i <= SENSORS_PER_AIU; i++ {
+            for i := 0; i < SENSORS_PER_AIU; i++ {
                 t := state & 1
                 if t != (previous & 1) {
                     s.Reply(fmt.Sprintf("100 INFO 8 FB %d %d", sensor + i, t))
@@ -264,6 +264,6 @@ func (s *SrcpSession) SendSensorUpdate(m *Model) {
                 previous >>= 1
             }
         }
-        sensor += SENSORS_PER_AIU
+        sensor += BITS_PER_AIU_WORD
     }
 }

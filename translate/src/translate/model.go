@@ -17,8 +17,9 @@ const MAX_AIUS        = 4
 // The first AIU that contains LayoutWifi sensors is internally 3
 const AIU_SENSORS_BASE= 3
 const SENSORS_PER_AIU = 14
+const BITS_PER_AIU_WORD = 16
 const SENSORS_MASK    = (1 << SENSORS_PER_AIU) - 1
-const MAX_SENSORS     = SENSORS_PER_AIU * MAX_AIUS
+const MAX_SENSORS     = (MAX_AIUS - 1) * BITS_PER_AIU_WORD + SENSORS_PER_AIU
 
 // Expect to handle 8 turnouts, using 28 for future expansion.
 // By convention AIU 1 and 2 will mirror the turnout feedback states.
@@ -69,20 +70,19 @@ func (m *Model) IsQuitting() bool {
 }
 
 // Get the 1-bit sensor value for the given sensor.
-// Sensors numbers are 1-based: 1..MAX_SENSORS
+// Sensors numbers are 0-based: 0..MAX_SENSORS-1
 func (m *Model) GetSensor(sensor int) bool {
-    if (sensor < 1 || sensor > MAX_SENSORS) {
-        panic(fmt.Errorf("Invalid sensor number %d [1..%d]", sensor, MAX_SENSORS))
+    if (sensor < 0 || sensor >= MAX_SENSORS) {
+        panic(fmt.Errorf("Invalid sensor number %d [0..%d]", sensor, MAX_SENSORS-1))
     }
 
     m.mutex.Lock()
     defer m.mutex.Unlock()
 
-    sensor -= 1
-    aiu   := sensor / SENSORS_PER_AIU
-    index := uint(sensor - aiu * SENSORS_PER_AIU)
+    aiu, bit := m.ConvertSensorToAiuBit(sensor)
+    aiu -= 1
 
-    return ((m.sensors[aiu] >> index) & 1) != 0
+    return ((m.sensors[aiu] >> bit) & 1) != 0
 }
 
 // Get the 14-bit sensor value for the given AIU.
@@ -99,26 +99,35 @@ func (m *Model) GetSensors(aiu int) uint16 {
 }
 
 // Set the 1-bit sensor value for the given sensor.
-// Sensors numbers are 1-based: 1..MAX_SENSORS
+// Sensors numbers are 0-based: 0..MAX_SENSORS-1
 func (m *Model) SetSensor(sensor int, active bool) {
-    if (sensor < 1 || sensor > MAX_SENSORS) {
-        panic(fmt.Errorf("Invalid sensor number %d [1..%d]", sensor, MAX_SENSORS))
+    if (sensor < 0 || sensor >= MAX_SENSORS) {
+        panic(fmt.Errorf("Invalid sensor number %d [0..%d]", sensor, MAX_SENSORS-1))
     }
 
     m.mutex.Lock()
     defer m.mutex.Unlock()
 
-    sensor -= 1
-    aiu   := sensor / SENSORS_PER_AIU
-    index := uint(sensor - aiu * SENSORS_PER_AIU)
+    aiu, bit := m.ConvertSensorToAiuBit(sensor)
+    aiu -= 1
+    value := uint16(1 << bit)
 
     n := m.sensors[aiu]
     if active {
-        n |= 1 << index
+        n |= value
     } else {
-        n &= ^(1 << index)
+        n &= ^value
     }
     m.sensors[aiu] = n
+}
+
+// Converts a sensor int number (e.g. "TS33") to an AIU "3:2" number
+// where the AIU index is 1-based and the bit index is 0-based.
+// Sensors numbers are 0-based: 0..MAX_SENSORS-1
+func (m *Model) ConvertSensorToAiuBit(sensor int) (aiu int, bit uint) {
+    aiu = sensor / BITS_PER_AIU_WORD
+    bit = uint(sensor - aiu * BITS_PER_AIU_WORD)
+    return aiu + 1, bit
 }
 
 // Set the 14-bit sensors value for the given AIU.
