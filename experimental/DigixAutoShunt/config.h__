@@ -1,9 +1,0 @@
-#ifndef Config_h
-#define Config_h
-
-//------------------------------
-
-void setup_config();
-void read_config();
-
-#endif Config_h
