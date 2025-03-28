@@ -87,12 +87,12 @@ Note that _test.sh is currently designed for Cygwin's GCC.
 To flash the software on a DigiX:
 
 * Follow the wiki instructions to [setup the Arduino IDE with the DigiX board](http://digistump.com/wiki/digix/tutorials/software).
-* Load [LayoutWifi.ino](https://bitbucket.org/ralfoide/layout/src/HEAD/digix/LayoutWifi/LayoutWifi.ino) in the IDE.
+* Load [LayoutWifi.ino](https://github.com/ralfoide/layout/src/HEAD/digix/LayoutWifi/LayoutWifi.ino) in the IDE.
 * Build and deploy to your DigiX.
 
 
 Features of the software, which can be changed via parameters in
-[LayoutWifi.ino](https://bitbucket.org/ralfoide/layout/src/HEAD/digix/LayoutWifi/LayoutWifi.ino):
+[LayoutWifi.ino](https://github.com/ralfoide/layout/src/HEAD/digix/LayoutWifi/LayoutWifi.ino):
 
 * By default, up to 8 turnouts can be controlled.
 * Turnouts are controlled via pins 90-105. 
@@ -258,7 +258,7 @@ I've personnally used 3 kind of cameras:
 
 For Foscam and Edimax, the default multipart Go parser works well to split the MJPEG stream.
 This doesn't work with the D-Link and I coded a
-[simplified MJPEG stream parser](https://bitbucket.org/ralfoide/layout/src/651f96d615e9622f35832c4990a09a84832fe7aa/translate/src/translate/cam_sensor.go?at=master&fileviewer=file-view-default#cam_sensor.go-390) which is triggered by detecting the word `dlink` in the camera host name.
+[simplified MJPEG stream parser](https://github.com/ralfoide/layout/src/651f96d615e9622f35832c4990a09a84832fe7aa/translate/src/translate/cam_sensor.go?at=master&fileviewer=file-view-default#cam_sensor.go-390) which is triggered by detecting the word `dlink` in the camera host name.
 Adding a configuration setting is left as an exercise for the reader.
 
 To choose which camera to use, think of your lower denominator use case.
